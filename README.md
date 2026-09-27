@@ -1,2 +1,0 @@
-# Silf
-Agente AI
