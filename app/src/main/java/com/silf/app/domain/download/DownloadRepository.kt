@@ -1,6 +1,7 @@
 package com.silf.app.domain.download
 
 import android.content.Context
+import androidx.lifecycle.asFlow
 import androidx.work.Constraints
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
@@ -39,9 +40,10 @@ class DownloadRepository(context: Context) {
         val request = OneTimeWorkRequestBuilder<ModelDownloadWorker>()
             .setInputData(inputDataBuilder.build())
             .setConstraints(constraints)
+            .addTag(ModelDownloadContract.DOWNLOAD_TAG)
+            .addTag("${ModelDownloadContract.UNIQUE_PREFIX}${spec.modelId}")
             .build()
 
-        // Evitar descargas duplicadas del mismo modelo
         workManager.enqueueUniqueWork(
             uniqueWorkName,
             ExistingWorkPolicy.KEEP,
@@ -80,5 +82,9 @@ class DownloadRepository(context: Context) {
 
     fun cancelDownload(modelId: String) {
         workManager.cancelUniqueWork(ModelDownloadContract.UNIQUE_PREFIX + modelId)
+    }
+
+    fun observeActiveDownloads(): Flow<List<WorkInfo>> {
+        return workManager.getWorkInfosByTagLiveData(ModelDownloadContract.DOWNLOAD_TAG).asFlow()
     }
 }
