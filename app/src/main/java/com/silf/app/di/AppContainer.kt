@@ -1,7 +1,9 @@
 package com.silf.app.di
 
-interface AppContainer {
-}
+import android.content.Context
+import com.silf.app.domain.llm.FakeLlmEngine
+import com.silf.app.domain.llm.LlmEngine
 
-class DefaultAppContainer : AppContainer {
+class AppContainer(@Suppress("unused") context: Context) {
+    val llmEngine: LlmEngine = FakeLlmEngine()
 }
