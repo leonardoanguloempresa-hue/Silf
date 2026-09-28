@@ -3,7 +3,6 @@ package com.silf.app.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.silf.app.domain.llm.LlmEngine
-import com.silf.app.domain.llm.LlmResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,13 +21,24 @@ class ChatViewModel(private val llmEngine: LlmEngine) : ViewModel() {
     private val _isGenerating = MutableStateFlow(false)
     val isGenerating: StateFlow<Boolean> = _isGenerating.asStateFlow()
 
+    private val _showErrorToast = MutableStateFlow<String?>(null)
+    val showErrorToast: StateFlow<String?> = _showErrorToast.asStateFlow()
+
     private var generationJob: Job? = null
 
     fun onDraftChanged(text: String) { _draftText.value = text }
 
+    fun dismissError() { _showErrorToast.value = null }
+
     fun onSendMessage() {
         val prompt = _draftText.value.trim()
         if (prompt.isEmpty() || _isGenerating.value) return
+
+        if (!llmEngine.isReady()) {
+            _showErrorToast.value = "Carga un modelo en el catálogo primero"
+            return
+        }
+
         _messages.value = _messages.value + ChatMessage(text = prompt, isUser = true)
         _draftText.value = ""
         val responseId = UUID.randomUUID().toString()
@@ -38,42 +48,38 @@ class ChatViewModel(private val llmEngine: LlmEngine) : ViewModel() {
         generationJob = viewModelScope.launch {
             val builder = StringBuilder()
             try {
-                llmEngine.generateResponse(prompt).collect { result ->
-                    when (result) {
-                        is LlmResult.Token -> {
-                            builder.append(result.text)
-                            _messages.value = _messages.value.map {
-                                if (it.id == responseId) it.copy(text = builder.toString()) else it
-                            }
-                        }
-                        is LlmResult.Completed -> {}
-                        is LlmResult.Failed -> {
-                            _messages.value = _messages.value.map {
-                                if (it.id == responseId) it.copy(text = "Error: ${result.error.message}") else it
-                            }
-                        }
+                llmEngine.generateResponseStream(prompt).collect { token ->
+                    builder.append(token)
+                    _messages.value = _messages.value.map {
+                        if (it.id == responseId) it.copy(text = builder.toString()) else it
                     }
                 }
-            } catch (c: CancellationException) { throw c
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 _messages.value = _messages.value.map {
                     if (it.id == responseId) it.copy(text = "Error: ${t.message}") else it
                 }
-            } finally { _isGenerating.value = false }
+            } finally {
+                _isGenerating.value = false
+            }
         }
     }
 
-    fun clearHistory() {
+    fun stopGeneration() {
         generationJob?.cancel()
-        llmEngine.cancel()
+        llmEngine.stopGeneration()
+        _isGenerating.value = false
+    }
+
+    fun clearHistory() {
+        stopGeneration()
         _messages.value = emptyList()
         _draftText.value = ""
-        _isGenerating.value = false
     }
 
     override fun onCleared() {
         super.onCleared()
-        generationJob?.cancel()
-        llmEngine.cancel()
+        stopGeneration()
     }
 }

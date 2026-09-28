@@ -25,10 +25,11 @@ fun CatalogScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val appContainer = (context.applicationContext as SilfApplication).container
 
-    val factory = remember { CatalogViewModel.Factory(appContainer.downloadRepository) }
+    val factory = remember { CatalogViewModel.Factory(appContainer.downloadRepository, appContainer.llmEngine) }
     val viewModel: CatalogViewModel = viewModel(factory = factory)
 
     val downloadStates by viewModel.downloadStates.collectAsState()
+    val isLoadingModel by viewModel.isLoadingModel.collectAsState()
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         Text(
@@ -44,8 +45,10 @@ fun CatalogScreen(modifier: Modifier = Modifier) {
                 ModelCard(
                     entry = entry,
                     state = state,
+                    isLoading = isLoadingModel == entry.id,
                     onDownloadClick = { viewModel.startDownload(entry.downloadSpec) },
-                    onCancelClick = { viewModel.cancelDownload(entry.id) }
+                    onCancelClick = { viewModel.cancelDownload(entry.id) },
+                    onLoadClick = { path -> viewModel.loadModel(entry.id, path) }
                 )
             }
         }
@@ -56,8 +59,10 @@ fun CatalogScreen(modifier: Modifier = Modifier) {
 private fun ModelCard(
     entry: ModelEntry,
     state: DownloadState,
+    isLoading: Boolean,
     onDownloadClick: () -> Unit,
-    onCancelClick: () -> Unit
+    onCancelClick: () -> Unit,
+    onLoadClick: (String) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -78,11 +83,22 @@ private fun ModelCard(
                     }
                 }
                 state is DownloadState.Completed -> {
-                    Text(text = "Descargado · Uso pendiente Fase 5", color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)
+                    if (isLoading) {
+                        Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Cargando modelo...")
+                        }
+                    } else {
+                        Button(onClick = { onLoadClick(state.filePath) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
+                            Text("Cargar Modelo en RAM", color = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    }
+                    Text(text = "Descargado · Uso pendiente Fase 5", color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
                 }
                 state is DownloadState.InProgress -> {
                     val progress = state.progress?.div(100f) ?: 0f
-                    LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().height(8.dp), color = MaterialTheme.colorScheme.primary)
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp), color = MaterialTheme.colorScheme.primary)
                     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text(text = formatProgress(state.bytesDownloaded, state.totalBytes), color = MaterialTheme.colorScheme.onSurface)
                         TextButton(onClick = onCancelClick) { Text("Cancelar", color = Color.Red) }
