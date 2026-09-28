@@ -78,7 +78,7 @@ private fun ModelCard(
                     }
                 }
                 state is DownloadState.Completed -> {
-                    Text(text = "✅ Descargado y listo", color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)
+                    Text(text = "Descargado · Uso pendiente Fase 5", color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)
                 }
                 state is DownloadState.InProgress -> {
                     val progress = state.progress?.div(100f) ?: 0f

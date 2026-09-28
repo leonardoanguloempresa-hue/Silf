@@ -10,6 +10,7 @@ object ModelDownloadContract {
     const val KEY_EXPECTED_BYTES = "expected_bytes"
     const val KEY_SHA256 = "sha256"
     const val KEY_MAX_BYTES = "max_bytes"
+    const val KEY_FORMAT = "format"
 
     const val OUTPUT_FILE_PATH = "file_path"
     const val OUTPUT_MODEL_ID = "model_id"

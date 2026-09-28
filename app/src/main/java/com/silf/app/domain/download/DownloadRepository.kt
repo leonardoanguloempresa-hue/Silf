@@ -26,6 +26,7 @@ class DownloadRepository(context: Context) {
             .putString(ModelDownloadContract.KEY_MODEL_ID, spec.modelId)
             .putString(ModelDownloadContract.KEY_MODEL_URL, spec.url)
             .putString(ModelDownloadContract.KEY_MODEL_NAME, spec.fileName)
+            .putString(ModelDownloadContract.KEY_FORMAT, spec.format.name)
             .putLong(ModelDownloadContract.KEY_MAX_BYTES, spec.maxBytes)
 
         spec.expectedBytes?.let { inputDataBuilder.putLong(ModelDownloadContract.KEY_EXPECTED_BYTES, it) }

@@ -11,6 +11,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.silf.app.domain.download.ModelDownloadSpec
+import com.silf.app.domain.download.ModelFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Call
@@ -146,7 +147,15 @@ class ModelDownloadWorker(
         val expected = inputData.getLong(ModelDownloadContract.KEY_EXPECTED_BYTES, -1L).takeIf { it != -1L }
         val sha256 = inputData.getString(ModelDownloadContract.KEY_SHA256)
         val max = inputData.getLong(ModelDownloadContract.KEY_MAX_BYTES, 5L * 1024 * 1024 * 1024)
-        return ModelDownloadSpec(id, url, name, expected, sha256, max)
+
+        val formatStr = inputData.getString(ModelDownloadContract.KEY_FORMAT)
+        val format = if (formatStr != null) {
+            try { ModelFormat.valueOf(formatStr) } catch(e: Exception) { ModelFormat.GGUF }
+        } else {
+            ModelFormat.GGUF
+        }
+
+        return ModelDownloadSpec(id, url, name, format, expected, sha256, max)
     }
 
     private fun validateFile(file: File, spec: ModelDownloadSpec): Boolean {
