@@ -31,7 +31,8 @@ import com.silf.app.ui.theme.SilfCardSurface
 
 @Composable
 fun ChatScreen() {
-    val application = LocalContext.current.applicationContext as SilfApplication
+    val context = LocalContext.current
+    val application = context.applicationContext as SilfApplication
     val container = application.container
     val chatViewModel: ChatViewModel = viewModel(factory = ChatViewModelFactory(container.llmEngine))
 
