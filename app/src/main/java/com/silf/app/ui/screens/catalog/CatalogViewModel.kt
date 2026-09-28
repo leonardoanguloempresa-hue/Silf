@@ -10,19 +10,26 @@ import com.silf.app.domain.download.DownloadRepository
 import com.silf.app.domain.download.DownloadState
 import com.silf.app.domain.download.ModelDownloadSpec
 import com.silf.app.data.workers.ModelDownloadContract
+import com.silf.app.domain.llm.LlmEngine
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class CatalogViewModel(
-    private val repository: DownloadRepository
+    private val repository: DownloadRepository,
+    private val llmEngine: LlmEngine
 ) : ViewModel() {
 
     val availableModels: List<ModelEntry> = ModelCatalog.models
     private val _downloadStates = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
     val downloadStates: StateFlow<Map<String, DownloadState>> = _downloadStates.asStateFlow()
+
+    private val _isLoadingModel = MutableStateFlow<String?>(null)
+    val isLoadingModel: StateFlow<String?> = _isLoadingModel.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -40,7 +47,11 @@ class CatalogViewModel(
                             val total = workInfo.progress.getLong(ModelDownloadContract.PROGRESS_TOTAL, -1L).takeIf { it > 0 }
                             DownloadState.InProgress(workId, progress, bytes, total)
                         }
-                        WorkInfo.State.SUCCEEDED -> DownloadState.Completed(workId, modelId, "", 0L)
+                        WorkInfo.State.SUCCEEDED -> {
+                            val path = workInfo.outputData.getString(ModelDownloadContract.OUTPUT_FILE_PATH) ?: ""
+                            val mId = workInfo.outputData.getString(ModelDownloadContract.OUTPUT_MODEL_ID) ?: modelId
+                            DownloadState.Completed(workId, mId, path, -1L)
+                        }
                         WorkInfo.State.FAILED -> DownloadState.Failed(workId, "Error de descarga", false)
                         WorkInfo.State.ENQUEUED -> DownloadState.Enqueued(workId)
                         else -> DownloadState.NotStarted
@@ -65,10 +76,24 @@ class CatalogViewModel(
         _downloadStates.update { it.toMutableMap().apply { put(modelId, DownloadState.Cancelled(modelId, true)) } }
     }
 
-    class Factory(private val repository: DownloadRepository) : ViewModelProvider.Factory {
+    fun loadModel(modelId: String, path: String) {
+        if (_isLoadingModel.value != null) return
+        _isLoadingModel.value = modelId
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                llmEngine.loadModel(path)
+            }
+            _isLoadingModel.value = null
+        }
+    }
+
+    class Factory(
+        private val repository: DownloadRepository,
+        private val llmEngine: LlmEngine
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return CatalogViewModel(repository) as T
+            return CatalogViewModel(repository, llmEngine) as T
         }
     }
 }
