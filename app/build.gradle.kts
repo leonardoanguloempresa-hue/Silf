@@ -30,6 +30,8 @@ android {
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
 }
 dependencies {
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
     implementation("com.google.mediapipe:tasks-genai:0.10.14")
     val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
     implementation(composeBom)
