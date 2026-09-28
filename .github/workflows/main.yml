@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
     - name: set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -18,7 +20,11 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
     - name: Build with Gradle
-      run: ./gradlew assembleDebug --no-daemon
+      run: ./gradlew assembleDebug --no-daemon --info --stacktrace
+    - name: Run Unit Tests
+      run: ./gradlew test --no-daemon
+    - name: Run Lint
+      run: ./gradlew lintDebug --no-daemon
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
