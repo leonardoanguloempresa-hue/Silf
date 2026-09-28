@@ -1,6 +1,7 @@
 package com.silf.app.domain.catalog
 
 import com.silf.app.domain.download.ModelDownloadSpec
+import com.silf.app.domain.download.ModelFormat
 
 data class ModelEntry(
     val id: String,
@@ -14,29 +15,45 @@ data class ModelEntry(
 object ModelCatalog {
     val models = listOf(
         ModelEntry(
-            id = "gemma-2b-it",
-            displayName = "Gemma 2B IT",
-            description = "Modelo oficial de Google optimizado para CPU. Requiere aceptar licencia.",
-            sizeLabel = "1.3 GB",
-            requiresLicense = true, // Deshabilitará el botón
+            id = "qwen2.5-1.5b-instruct-gguf",
+            displayName = "Qwen 2.5 (1.5B) Instruct",
+            description = "Formato GGUF · Carga en Fase 5. Modelo ultraligero y rápido para respuestas directas.",
+            sizeLabel = "1.12 GB",
+            requiresLicense = false,
             downloadSpec = ModelDownloadSpec(
-                modelId = "gemma-2b-it",
-                url = "https://huggingface.co/google/gemma-2b-it-cpu/resolve/main/gemma-2b-it-cpu-int8.task",
-                fileName = "gemma-2b-it.task",
+                modelId = "qwen2.5-1.5b-instruct-gguf",
+                url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                fileName = "qwen2_5_1_5b_instruct.gguf",
+                format = ModelFormat.GGUF,
                 maxBytes = 2L * 1024 * 1024 * 1024
             )
         ),
         ModelEntry(
-            id = "qwen-1.5b-chat",
-            displayName = "Qwen 1.5B Chat",
-            description = "Modelo rápido y eficiente para dispositivos móviles.",
-            sizeLabel = "900 MB",
+            id = "qwen2.5-3b-instruct-gguf",
+            displayName = "Qwen 2.5 (3B) Instruct",
+            description = "Formato GGUF · Carga en Fase 5. Excelente balance entre inteligencia y uso de RAM en móviles.",
+            sizeLabel = "2.14 GB",
             requiresLicense = false,
             downloadSpec = ModelDownloadSpec(
-                modelId = "qwen-1.5b-chat",
-                url = "https://huggingface.co/Qwen/Qwen1.5-1.8B-Chat-GGUF/resolve/main/qwen1_5-1_8b-chat-q4_0.gguf", // NOTA: MediaPipe prefiere .task, esto es ejemplo visual
-                fileName = "qwen-1.5b-chat.task",
-                maxBytes = 1L * 1024 * 1024 * 1024
+                modelId = "qwen2.5-3b-instruct-gguf",
+                url = "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
+                fileName = "qwen2_5_3b_instruct.gguf",
+                format = ModelFormat.GGUF,
+                maxBytes = 3L * 1024 * 1024 * 1024
+            )
+        ),
+        ModelEntry(
+            id = "llama-3.2-3b-instruct-gguf",
+            displayName = "Llama 3.2 (3B) Instruct",
+            description = "Formato GGUF · Carga en Fase 5. Modelo avanzado de Meta. Requiere aceptar licencia en HF.",
+            sizeLabel = "2.18 GB",
+            requiresLicense = true, // Mantiene el botón deshabilitado
+            downloadSpec = ModelDownloadSpec(
+                modelId = "llama-3.2-3b-instruct-gguf",
+                url = "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+                fileName = "llama3_2_3b_instruct.gguf",
+                format = ModelFormat.GGUF,
+                maxBytes = 3L * 1024 * 1024 * 1024
             )
         )
     )
