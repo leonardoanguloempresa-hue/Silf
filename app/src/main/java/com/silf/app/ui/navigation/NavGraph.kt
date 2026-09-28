@@ -6,8 +6,8 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.silf.app.ui.screens.ChatScreen
-import com.silf.app.ui.screens.ModelsScreen
 import com.silf.app.ui.screens.SettingsScreen
+import com.silf.app.ui.screens.catalog.CatalogScreen
 
 @Composable
 fun SilfNavGraph(
@@ -24,7 +24,7 @@ fun SilfNavGraph(
             ChatScreen()
         }
         composable(route = Destination.Models.route) {
-            ModelsScreen()
+            CatalogScreen()
         }
         composable(route = Destination.Settings.route) {
             SettingsScreen()

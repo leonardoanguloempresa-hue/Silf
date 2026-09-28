@@ -2,6 +2,7 @@ package com.silf.app.data.workers
 
 object ModelDownloadContract {
     const val UNIQUE_PREFIX = "model-download-"
+    const val DOWNLOAD_TAG = "silf_model_download"
 
     const val KEY_MODEL_ID = "model_id"
     const val KEY_MODEL_URL = "model_url"
