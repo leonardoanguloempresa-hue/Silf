@@ -30,6 +30,7 @@ fun CatalogScreen(modifier: Modifier = Modifier) {
 
     val downloadStates by viewModel.downloadStates.collectAsState()
     val isLoadingModel by viewModel.isLoadingModel.collectAsState()
+    val errorMessage by viewModel.errorMessage.collectAsState()
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         Text(
@@ -38,6 +39,35 @@ fun CatalogScreen(modifier: Modifier = Modifier) {
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(bottom = 24.dp, top = 16.dp)
         )
+
+        errorMessage?.let { errorMsg ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = errorMsg,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { viewModel.dismissError() }) {
+                        Text("Cerrar", color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
+            }
+        }
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             items(viewModel.availableModels) { entry ->

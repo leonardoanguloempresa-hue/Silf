@@ -35,37 +35,104 @@ static void llama_batch_clear(struct llama_batch & batch) {
     batch.n_tokens = 0;
 }
 
+static void throwOOMException(JNIEnv *env, const char *message) {
+    jclass exClass = env->FindClass("java/lang/OutOfMemoryError");
+    if (!exClass) {
+        env->ExceptionClear();
+        exClass = env->FindClass("java/lang/RuntimeException");
+    }
+    if (exClass) {
+        env->ThrowNew(exClass, message);
+    }
+}
+
 extern "C"
 JNIEXPORT jlong JNICALL
 Java_com_silf_app_llm_LlamaNative_loadModel(JNIEnv *env, jobject thiz, jstring model_path, jboolean use_mmap, jint threads, jint context_size) {
+    if (!model_path) {
+        throwOOMException(env, "Error: Memoria insuficiente para cargar el modelo (ruta inválida)");
+        return 0;
+    }
+
     const char *path = env->GetStringUTFChars(model_path, nullptr);
-
-    InferenceContext* infCtx = new InferenceContext();
-
-    llama_model_params mparams = llama_model_default_params();
-    mparams.use_mmap = use_mmap;
-
-    infCtx->model = llama_load_model_from_file(path, mparams);
-    env->ReleaseStringUTFChars(model_path, path);
-
-    if (!infCtx->model) {
-        LOGE("Failed to load model from %s", path);
-        delete infCtx;
+    if (!path) {
+        throwOOMException(env, "Error: Memoria insuficiente para cargar el modelo");
         return 0;
     }
 
-    llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx = context_size;
+    InferenceContext* infCtx = nullptr;
 
-    infCtx->ctx = llama_new_context_with_model(infCtx->model, cparams);
-    if (!infCtx->ctx) {
-        LOGE("Failed to create context");
-        delete infCtx;
+    try {
+        infCtx = new InferenceContext();
+
+        llama_model_params mparams = llama_model_default_params();
+        mparams.use_mmap = use_mmap;
+
+        infCtx->model = llama_load_model_from_file(path, mparams);
+        env->ReleaseStringUTFChars(model_path, path);
+        path = nullptr;
+
+        if (!infCtx->model) {
+            LOGE("Failed to load model from file: insufficient memory or invalid model");
+            delete infCtx;
+            infCtx = nullptr;
+            throwOOMException(env, "Error: Memoria insuficiente para cargar el modelo");
+            return 0;
+        }
+
+        llama_context_params cparams = llama_context_default_params();
+        cparams.n_ctx = context_size;
+        cparams.n_threads = threads;
+
+        infCtx->ctx = llama_new_context_with_model(infCtx->model, cparams);
+        if (!infCtx->ctx) {
+            LOGE("Failed to create context: insufficient memory");
+            delete infCtx;
+            infCtx = nullptr;
+            throwOOMException(env, "Error: Memoria insuficiente para cargar el modelo");
+            return 0;
+        }
+
+        LOGI("Model loaded successfully");
+        return reinterpret_cast<jlong>(infCtx);
+
+    } catch (const std::bad_alloc &e) {
+        LOGE("std::bad_alloc caught while loading model: %s", e.what());
+        if (path) {
+            env->ReleaseStringUTFChars(model_path, path);
+            path = nullptr;
+        }
+        if (infCtx) {
+            delete infCtx;
+            infCtx = nullptr;
+        }
+        throwOOMException(env, "Error: Memoria insuficiente para cargar el modelo");
+        return 0;
+    } catch (const std::exception &e) {
+        LOGE("std::exception caught while loading model: %s", e.what());
+        if (path) {
+            env->ReleaseStringUTFChars(model_path, path);
+            path = nullptr;
+        }
+        if (infCtx) {
+            delete infCtx;
+            infCtx = nullptr;
+        }
+        throwOOMException(env, "Error: Memoria insuficiente para cargar el modelo");
+        return 0;
+    } catch (...) {
+        LOGE("Unknown exception caught while loading model");
+        if (path) {
+            env->ReleaseStringUTFChars(model_path, path);
+            path = nullptr;
+        }
+        if (infCtx) {
+            delete infCtx;
+            infCtx = nullptr;
+        }
+        throwOOMException(env, "Error: Memoria insuficiente para cargar el modelo");
         return 0;
     }
-
-    LOGI("Model loaded successfully");
-    return reinterpret_cast<jlong>(infCtx);
 }
 
 extern "C"
