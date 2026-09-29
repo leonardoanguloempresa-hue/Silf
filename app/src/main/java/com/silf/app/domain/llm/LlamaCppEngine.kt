@@ -47,11 +47,17 @@ class LlamaCppEngine : LlmEngine {
             return@callbackFlow
         }
 
-        val formatted = "<|im_start|>system\nEres Silf, un asistente de IA útil y conciso.<|im_end|>\n<|im_start|>user\n$prompt<|im_end|>\n<|im_start|>assistant\n"
+        // ChatML estricto — el mensaje del usuario se interpola con trim() para evitar
+        // que espacios/saltos accidentales corrompan el formato del template.
+        val userMsg = prompt.trim()
+        val formatted = "<|im_start|>system\nEres Silf, un asistente útil y preciso.<|im_end|>\n" +
+                        "<|im_start|>user\n${userMsg}<|im_end|>\n" +
+                        "<|im_start|>assistant\n"
+
         val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
         var isStopped = false
 
-        native.generate(modelHandle, formatted, 512, 0.7f, object : TokenCallback {
+        native.generate(modelHandle, formatted, 512, 0.4f, object : TokenCallback {
             override fun onToken(text: String) {
                 if (isStopped) return
                 if (stopTokens.any { text.contains(it) }) {

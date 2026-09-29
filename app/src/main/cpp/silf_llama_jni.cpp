@@ -164,19 +164,26 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
         infCtx->cancel_flag = false;
 
         try {
-            // Tokenizar el prompt
+            // Tokenizar el prompt.
+            // BUGFIX: el buffer debe ser >= 4x la longitud del string en bytes porque:
+            //   - tokens especiales como <|im_start|> se cuentan como 1 token pero son muchos bytes
+            //   - el ratio tokens/chars en ChatML puede superar 1.5x
+            // Primer intento con estimación generosa (4x + 64 para tokens BOS/EOS)
             std::vector<llama_token> tokens_list;
-            tokens_list.resize(prompt_str.length() + 4);
-            int n_tokens = llama_tokenize(infCtx->model, prompt_str.c_str(), prompt_str.length(), tokens_list.data(), tokens_list.size(), true, true);
+            int estimated = (int)prompt_str.length() * 4 + 64;
+            tokens_list.resize(estimated);
+            int n_tokens = llama_tokenize(infCtx->model, prompt_str.c_str(), (int)prompt_str.length(), tokens_list.data(), (int)tokens_list.size(), true, true);
 
             if (n_tokens < 0) {
-                tokens_list.resize(-n_tokens);
-                n_tokens = llama_tokenize(infCtx->model, prompt_str.c_str(), prompt_str.length(), tokens_list.data(), tokens_list.size(), true, true);
+                // llama.cpp devuelve el tamaño exacto negado si el buffer era pequeño
+                tokens_list.resize(-n_tokens + 8);
+                n_tokens = llama_tokenize(infCtx->model, prompt_str.c_str(), (int)prompt_str.length(), tokens_list.data(), (int)tokens_list.size(), true, true);
             }
-            if (n_tokens < 0) {
-                throw std::runtime_error("Failed to tokenize");
+            if (n_tokens <= 0) {
+                throw std::runtime_error("Failed to tokenize prompt (n_tokens=" + std::to_string(n_tokens) + ")");
             }
             tokens_list.resize(n_tokens);
+            LOGI("Prompt tokenized: %d chars -> %d tokens", (int)prompt_str.length(), n_tokens);
 
             int n_ctx_total = llama_n_ctx(infCtx->ctx);
             if (n_tokens >= n_ctx_total) {
@@ -202,8 +209,16 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
             int n_cur = batch.n_tokens;
             int n_decode = 0;
 
-            // Helper lambda para muestrear un token dado un índice en las salidas del batch actual
-            auto sample_token_at = [&](int i_batch, float temperature) -> llama_token {
+            // Helper lambda para muestrear un token dado un índice en las salidas del batch actual.
+            // Parámetros de sampling conservadores para evitar alucinaciones:
+            //   temperature = 0.4  (distribución más concentrada)
+            //   top_k       = 40   (limitar el vocabulario candidato)
+            //   top_p       = 0.9  (nucleus sampling)
+            const float SAMPLING_TEMP  = 0.4f;
+            const int   SAMPLING_TOP_K = 40;
+            const float SAMPLING_TOP_P = 0.9f;
+
+            auto sample_token_at = [&](int i_batch, float /*temperature_unused*/) -> llama_token {
                 float* logits = llama_get_logits_ith(infCtx->ctx, i_batch);
                 if (!logits) return llama_token_eos(infCtx->model);
 
@@ -214,12 +229,12 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
                     candidates.emplace_back(llama_token_data{token_id, logits[token_id], 0.0f});
                 }
                 llama_token_data_array candidates_p = { candidates.data(), candidates.size(), false };
-                if (temperature > 0.0f) {
-                    llama_sample_temp(infCtx->ctx, &candidates_p, temperature);
-                    return llama_sample_token(infCtx->ctx, &candidates_p);
-                } else {
-                    return llama_sample_token_greedy(infCtx->ctx, &candidates_p);
-                }
+
+                // Aplicar top_k, luego top_p (nucleus), luego temperatura en orden correcto
+                llama_sample_top_k(infCtx->ctx, &candidates_p, SAMPLING_TOP_K, 1);
+                llama_sample_top_p(infCtx->ctx, &candidates_p, SAMPLING_TOP_P, 1);
+                llama_sample_temp(infCtx->ctx, &candidates_p, SAMPLING_TEMP);
+                return llama_sample_token(infCtx->ctx, &candidates_p);
             };
 
             // Helper lambda para emitir un token hacia Kotlin vía callback
