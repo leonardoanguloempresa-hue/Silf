@@ -50,7 +50,7 @@ object ModelCatalog {
             requiresLicense = false,
             downloadSpec = ModelDownloadSpec(
                 modelId = "qwen2.5-7b-instruct-gguf",
-                url = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
+                url = "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
                 fileName = "qwen2_5_7b_instruct.gguf",
                 format = ModelFormat.GGUF,
                 maxBytes = 10L * 1024 * 1024 * 1024
