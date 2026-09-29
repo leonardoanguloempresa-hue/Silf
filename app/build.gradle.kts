@@ -21,16 +21,18 @@ android {
         }
         externalNativeBuild {
             cmake {
-                cppFlags += listOf("-std=c++17", "-fexceptions", "-frtti")
+                cppFlags += listOf("-std=c++17", "-O3", "-DNDEBUG", "-fexceptions", "-frtti")
                 arguments += listOf(
                     "-DANDROID_ABI=arm64-v8a",
+                    "-DCMAKE_BUILD_TYPE=Release",
                     "-DGGML_NATIVE=OFF",
                     "-DGGML_OPENMP=OFF",
                     "-DGGML_LLAMAFILE=OFF",
                     "-DLLAMA_OPENSSL=OFF",
                     "-DLLAMA_BUILD_EXAMPLES=OFF",
                     "-DLLAMA_BUILD_TESTS=OFF",
-                    "-DLLAMA_BUILD_SERVER=OFF"
+                    "-DLLAMA_BUILD_SERVER=OFF",
+                    "-DGGML_VULKAN=OFF"
                 )
             }
         }

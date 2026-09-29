@@ -3,11 +3,19 @@ project("silf_llama")
 
 set(CMAKE_CXX_STANDARD 17)
 
+# Fase 6: Máxima optimización de compilación (-O3) para rendimiento extremo en Android ARM64
+add_compile_options(-O3 -DNDEBUG -fexceptions -frtti)
+set(CMAKE_BUILD_TYPE Release)
+
 # Opciones para compilar llama.cpp como librería estática mínima
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libs" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "Build examples" FORCE)
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "Build tests" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "Build server" FORCE)
+
+# Backend GPU Vulkan: si fallan dependencias de host (glslc/vulkan-shaders-gen cross-compilation),
+# se recurre a máxima optimización -O3 y vectorización NEON de CPU para máxima velocidad
+set(GGML_VULKAN OFF CACHE BOOL "ggml: use Vulkan" FORCE)
 
 add_subdirectory(llama.cpp)
 
