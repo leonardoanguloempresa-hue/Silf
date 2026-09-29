@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LlamaCppEngine : LlmEngine {
     private val native = LlamaNative()
@@ -55,22 +56,32 @@ class LlamaCppEngine : LlmEngine {
                         "<|im_start|>assistant\n"
 
         val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
-        var isStopped = false
+        // AtomicBoolean garantiza visibilidad entre el hilo de coroutine y el hilo nativo C++
+        // que llama a onToken() desde AttachCurrentThread. @Volatile no aplica a vars locales.
+        val isStopped = AtomicBoolean(false)
 
         native.generate(modelHandle, formatted, 512, 0.4f, object : TokenCallback {
             override fun onToken(text: String) {
-                if (isStopped) return
+                // Doble guardia: AtomicBoolean + canal ya cerrado
+                if (isStopped.get() || channel.isClosedForSend) return
                 if (stopTokens.any { text.contains(it) }) {
-                    isStopped = true
-                    native.cancel(modelHandle)
-                    close()
+                    if (isStopped.compareAndSet(false, true)) {
+                        native.cancel(modelHandle)
+                        close()
+                    }
                     return
                 }
-                trySend(text)
+                // Limpiar cualquier fragmento residual de stop token que llegue partido
+                val clean = stopTokens.fold(text) { acc, stop -> acc.replace(stop, "") }
+                if (clean.isNotEmpty()) {
+                    trySend(clean)
+                }
             }
-            override fun onComplete() { close() }
+            override fun onComplete() {
+                if (!channel.isClosedForSend) close()
+            }
             override fun onError(message: String) {
-                if (!isStopped) {
+                if (!isStopped.get() && !channel.isClosedForSend) {
                     trySend("\n[Error: $message]")
                 }
                 close()
@@ -78,6 +89,8 @@ class LlamaCppEngine : LlmEngine {
         })
 
         awaitClose { native.cancel(modelHandle) }
+
+
     }
 
     fun updateSystemContext(context: String) { systemContext = context }

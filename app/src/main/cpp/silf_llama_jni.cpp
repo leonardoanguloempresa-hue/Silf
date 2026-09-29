@@ -237,20 +237,40 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
                 return llama_sample_token(infCtx->ctx, &candidates_p);
             };
 
-            // Helper lambda para emitir un token hacia Kotlin vía callback
-            auto emit_token = [&](llama_token tok) -> bool {
+            // Helper: devuelve true si el token o su representación textual es un stop token.
+            // Es la fuente única de verdad para la detección de parada — evita duplicar la lógica.
+            auto is_stop_token = [&](llama_token tok) -> bool {
+                // 1. Verificación por ID de token: EOS, EOT y cualquier end-of-generation
                 if (llama_token_is_eog(infCtx->model, tok) ||
                     tok == llama_token_eos(infCtx->model) ||
                     tok == llama_token_eot(infCtx->model)) {
-                    return false; // EOS alcanzado
+                    LOGI("Stop token by ID detected: %d", tok);
+                    return true;
+                }
+                // 2. Verificación por string: <|im_end|> y <|endoftext|>
+                char buf[128];
+                int n = llama_token_to_piece(infCtx->model, tok, buf, sizeof(buf), 0, true);
+                if (n > 0) {
+                    std::string piece(buf, n);
+                    if (piece.find("<|im_end|>") != std::string::npos ||
+                        piece.find("<|endoftext|>") != std::string::npos) {
+                        LOGI("Stop token by string detected: '%s'", piece.c_str());
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            // Helper lambda para emitir un token hacia Kotlin vía callback.
+            // Retorna false si es stop token (el caller debe romper el bucle inmediatamente).
+            auto emit_token = [&](llama_token tok) -> bool {
+                if (is_stop_token(tok)) {
+                    return false; // Señal de parada: el caller hace break
                 }
                 char buf[128];
                 int n = llama_token_to_piece(infCtx->model, tok, buf, sizeof(buf), 0, true);
                 if (n > 0) {
                     std::string piece(buf, n);
-                    if (piece.find("<|im_end|>") != std::string::npos || piece.find("<|endoftext|>") != std::string::npos) {
-                        return false; // Interceptar stop tokens en C++
-                    }
                     jstring jPiece = env->NewStringUTF(piece.c_str());
                     env->CallVoidMethod(callbackGlobal, onTokenMethod, jPiece);
                     env->DeleteLocalRef(jPiece);
@@ -328,15 +348,20 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
                 llama_token next_token = -1;
 
                 for (size_t d = 0; d < drafts.size(); ++d) {
-                    // Los logits resultantes tras evaluar el token anterior están en el índice d
                     llama_token sampled = sample_token_at((int)d, temp);
 
                     if (sampled == drafts[d]) {
-                        // ¡Token especulativo ACEPTADO!
+                        // Token especulativo ACEPTADO — pero puede ser stop token
+                        if (is_stop_token(sampled)) {
+                            // EOS/EOT aceptado: salir limpiamente SIN emitir ni dejar next_token=-1
+                            all_drafts_accepted = false;
+                            next_token = sampled; // marcado para el break post-loop
+                            goto generation_done;  // salida inmediata del while
+                        }
                         if (!emit_token(sampled)) {
                             all_drafts_accepted = false;
                             next_token = sampled;
-                            break;
+                            goto generation_done;
                         }
                         history_tokens.push_back(sampled);
                         n_decode++;
@@ -360,7 +385,7 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
                     // muestrear el siguiente a partir de los logits del último draft
                     next_token = sample_token_at((int)drafts.size(), temp);
                     if (!emit_token(next_token)) {
-                        break;
+                        break; // stop token detectado
                     }
                     history_tokens.push_back(next_token);
                     n_decode++;
@@ -368,7 +393,9 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
                     // Al menos un token especulado fue rechazado; podar el KV cache
                     llama_kv_cache_seq_rm(infCtx->ctx, 0, (llama_pos)n_past, -1);
 
-                    if (llama_token_is_eog(infCtx->model, next_token) || next_token == llama_token_eos(infCtx->model) || next_token == llama_token_eot(infCtx->model)) {
+                    // next_token puede ser -1 si nunca se asignó en el loop de drafts
+                    // (no debería ocurrir con el goto arriba, pero salvaguarda defensiva)
+                    if (next_token < 0 || is_stop_token(next_token)) {
                         break;
                     }
                     if (n_decode < max_tokens) {
@@ -382,7 +409,7 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
                     // Paso autorregresivo estándar sin drafts
                     next_token = sample_token_at(0, temp);
                     if (!emit_token(next_token)) {
-                        break;
+                        break; // stop token detectado, salir inmediatamente
                     }
                     history_tokens.push_back(next_token);
                     n_decode++;
@@ -392,6 +419,7 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
                 n_cur = n_past;
             }
 
+            generation_done:
             env->CallVoidMethod(callbackGlobal, onCompleteMethod);
 
         } catch (const std::exception& e) {
