@@ -25,7 +25,7 @@ object ModelCatalog {
                 url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
                 fileName = "qwen2_5_1_5b_instruct.gguf",
                 format = ModelFormat.GGUF,
-                maxBytes = 2L * 1024 * 1024 * 1024
+                maxBytes = 3L * 1024 * 1024 * 1024
             )
         ),
         ModelEntry(
@@ -39,7 +39,7 @@ object ModelCatalog {
                 url = "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
                 fileName = "qwen2_5_3b_instruct.gguf",
                 format = ModelFormat.GGUF,
-                maxBytes = 3L * 1024 * 1024 * 1024
+                maxBytes = 5L * 1024 * 1024 * 1024
             )
         ),
         ModelEntry(
@@ -53,9 +53,8 @@ object ModelCatalog {
                 url = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
                 fileName = "qwen2_5_7b_instruct.gguf",
                 format = ModelFormat.GGUF,
-                maxBytes = 6L * 1024 * 1024 * 1024
+                maxBytes = 10L * 1024 * 1024 * 1024
             )
         )
     )
 }
-

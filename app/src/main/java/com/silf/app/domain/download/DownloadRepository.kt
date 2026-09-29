@@ -47,7 +47,7 @@ class DownloadRepository(context: Context) {
 
         workManager.enqueueUniqueWork(
             uniqueWorkName,
-            ExistingWorkPolicy.KEEP,
+            ExistingWorkPolicy.REPLACE,
             request
         )
 
@@ -56,7 +56,7 @@ class DownloadRepository(context: Context) {
 
     private fun observeDownload(workIdString: String, modelId: String): Flow<DownloadState> {
         return workManager.getWorkInfoByIdFlow(java.util.UUID.fromString(workIdString)).map { workInfo ->
-            if (workInfo == null) return@map DownloadState.Failed(workIdString, "WorkInfo nulo", false)
+            if (workInfo == null) return@map DownloadState.Failed(workIdString, "Información de descarga no disponible", false)
 
             when (workInfo.state) {
                 WorkInfo.State.ENQUEUED -> DownloadState.Enqueued(workIdString)
@@ -72,7 +72,7 @@ class DownloadRepository(context: Context) {
                     DownloadState.Completed(workIdString, mId, path, -1L)
                 }
                 WorkInfo.State.FAILED -> {
-                    val error = workInfo.outputData.getString(ModelDownloadContract.OUTPUT_ERROR) ?: "Error desconocido"
+                    val error = workInfo.outputData.getString(ModelDownloadContract.OUTPUT_ERROR) ?: "Error de descarga"
                     DownloadState.Failed(workIdString, error, false)
                 }
                 WorkInfo.State.CANCELLED -> DownloadState.Cancelled(workIdString, true)

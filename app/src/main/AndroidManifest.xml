@@ -13,6 +13,7 @@
         android:allowBackup="true"
         android:label="Silf"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Silf">
 
         <service

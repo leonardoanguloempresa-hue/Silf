@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -37,65 +38,87 @@ fun CatalogScreen(modifier: Modifier = Modifier) {
     val ollamaUrl by viewModel.ollamaUrl.collectAsState()
     val ollamaStatus by viewModel.ollamaStatus.collectAsState()
 
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        Text(
-            text = "Catálogo de Modelos",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 24.dp, top = 16.dp)
-        )
+    val snackbarHostState = remember { SnackbarHostState() }
 
+    LaunchedEffect(errorMessage) {
         errorMessage?.let { errorMsg ->
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-            ) {
-                Row(
+            snackbarHostState.showSnackbar(
+                message = errorMsg,
+                actionLabel = "OK",
+                duration = SnackbarDuration.Short
+            )
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+        modifier = modifier.fillMaxSize()
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Catálogo de Modelos",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 24.dp, top = 8.dp)
+            )
+
+            errorMessage?.let { errorMsg ->
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(bottom = 16.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                 ) {
-                    Text(
-                        text = errorMsg,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = { viewModel.dismissError() }) {
-                        Text("Cerrar", color = MaterialTheme.colorScheme.onErrorContainer)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = errorMsg,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { viewModel.dismissError() }) {
+                            Text("Cerrar", color = MaterialTheme.colorScheme.onErrorContainer)
+                        }
                     }
                 }
             }
-        }
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            // Tarjetas de modelos locales GGUF
-            items(viewModel.availableModels) { entry ->
-                val state = downloadStates[entry.id] ?: DownloadState.NotStarted
-                ModelCard(
-                    entry = entry,
-                    state = state,
-                    isLoading = isLoadingModel == entry.id,
-                    isActive = activeModelId == entry.id,
-                    onDownloadClick = { viewModel.startDownload(entry.downloadSpec) },
-                    onCancelClick = { viewModel.cancelDownload(entry.id) },
-                    onLoadClick = { path -> viewModel.loadModel(entry.id, path) }
-                )
-            }
-            // Tarjeta de conexión Ollama
-            item {
-                OllamaCard(
-                    url = ollamaUrl,
-                    status = ollamaStatus,
-                    onUrlChanged = viewModel::onOllamaUrlChanged,
-                    onConnectClick = viewModel::connectToOllama
-                )
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Tarjetas de modelos locales GGUF
+                items(viewModel.availableModels) { entry ->
+                    val state = downloadStates[entry.id] ?: DownloadState.NotStarted
+                    ModelCard(
+                        entry = entry,
+                        state = state,
+                        isLoading = isLoadingModel == entry.id,
+                        isActive = activeModelId == entry.id,
+                        onDownloadClick = { viewModel.startDownload(entry.downloadSpec) },
+                        onCancelClick = { viewModel.cancelDownload(entry.id) },
+                        onLoadClick = { path -> viewModel.loadModel(entry.id, path) }
+                    )
+                }
+                // Tarjeta de conexión Ollama
+                item {
+                    OllamaCard(
+                        url = ollamaUrl,
+                        status = ollamaStatus,
+                        onUrlChanged = viewModel::onOllamaUrlChanged,
+                        onConnectClick = viewModel::connectToOllama
+                    )
+                }
             }
         }
     }
@@ -175,8 +198,28 @@ private fun ModelCard(
                         TextButton(onClick = onCancelClick) { Text("Cancelar", color = Color.Red) }
                     }
                 }
+                state is DownloadState.Failed -> {
+                    Button(
+                        onClick = onDownloadClick,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("Reintentar descarga", color = MaterialTheme.colorScheme.onPrimary)
+                    }
+                    Text(
+                        text = "Error de descarga: ${state.reason}",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
                 else -> {
-                    Button(onClick = onDownloadClick, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
+                    Button(
+                        onClick = onDownloadClick,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
                         Text("Descargar modelo", color = MaterialTheme.colorScheme.onPrimary)
                     }
                 }

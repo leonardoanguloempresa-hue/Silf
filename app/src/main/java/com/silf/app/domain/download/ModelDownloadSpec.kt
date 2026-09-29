@@ -9,7 +9,7 @@ data class ModelDownloadSpec(
     val format: ModelFormat,
     val expectedBytes: Long? = null,
     val sha256: String? = null,
-    val maxBytes: Long = 5L * 1024L * 1024L * 1024L
+    val maxBytes: Long = 10L * 1024L * 1024L * 1024L
 ) {
     companion object {
         private val ALLOWED_EXTENSIONS = setOf(".task", ".litertlm", ".gguf")

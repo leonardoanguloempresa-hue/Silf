@@ -67,8 +67,7 @@ class CatalogViewModel(
         }
         _ollamaStatus.value = OllamaStatus.Connecting
         viewModelScope.launch {
-            // TODO Fase 9: Implementar llamada HTTP real a $url/api/tags para verificar conexión
-            // Por ahora placeholder — se marcará como activo en la siguiente fase
+            // Placeholder hasta la fase de integración HTTP con Ollama
             _ollamaStatus.value = OllamaStatus.Error("Conexión HTTP pendiente de implementación (Fase 9)")
         }
     }
@@ -98,7 +97,11 @@ class CatalogViewModel(
                             val mId = workInfo.outputData.getString(ModelDownloadContract.OUTPUT_MODEL_ID) ?: modelId
                             DownloadState.Completed(workId, mId, path, -1L)
                         }
-                        WorkInfo.State.FAILED -> DownloadState.Failed(workId, "Error de descarga", false)
+                        WorkInfo.State.FAILED -> {
+                            val error = workInfo.outputData.getString(ModelDownloadContract.OUTPUT_ERROR) ?: "Error de descarga"
+                            _errorMessage.value = "Error de descarga: $error"
+                            DownloadState.Failed(workId, error, false)
+                        }
                         WorkInfo.State.ENQUEUED -> DownloadState.Enqueued(workId)
                         else -> DownloadState.NotStarted
                     }
@@ -111,8 +114,21 @@ class CatalogViewModel(
 
     fun startDownload(spec: ModelDownloadSpec) {
         viewModelScope.launch {
-            repository.startModelDownload(spec).collect { state ->
-                _downloadStates.update { it.toMutableMap().apply { put(spec.modelId, state) } }
+            try {
+                repository.startModelDownload(spec).collect { state ->
+                    _downloadStates.update { it.toMutableMap().apply { put(spec.modelId, state) } }
+                    if (state is DownloadState.Failed) {
+                        _errorMessage.value = "Error de descarga: ${state.reason}"
+                    }
+                }
+            } catch (e: Exception) {
+                val reason = e.localizedMessage ?: "Fallo al iniciar descarga"
+                _downloadStates.update {
+                    it.toMutableMap().apply {
+                        put(spec.modelId, DownloadState.Failed(null, reason, false))
+                    }
+                }
+                _errorMessage.value = "Error de descarga: $reason"
             }
         }
     }
@@ -151,4 +167,3 @@ class CatalogViewModel(
         }
     }
 }
-

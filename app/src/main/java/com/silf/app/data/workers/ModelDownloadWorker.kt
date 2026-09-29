@@ -70,12 +70,18 @@ class ModelDownloadWorker(
 
             if (!response.isSuccessful) {
                 if (response.code == 416) { // Range Not Satisfiable (probablemente ya descargado)
-                     if (validateFile(outputFile, spec)) {
-                         return@withContext success(outputFile, spec)
-                     } else {
-                         outputFile.delete()
-                         return@withContext fail("Archivo corrupto, reintente descarga")
-                     }
+                    if (validateFile(outputFile, spec)) {
+                        return@withContext success(outputFile, spec)
+                    } else {
+                        outputFile.delete()
+                        return@withContext fail("Archivo corrupto, reintente descarga")
+                    }
+                }
+                if (response.code in 400..499 && response.code != 408 && response.code != 429) {
+                    return@withContext fail("Error HTTP ${response.code}: ${response.message.ifBlank { "Error del servidor" }}")
+                }
+                if (runAttemptCount >= 3) {
+                    return@withContext fail("Error HTTP ${response.code}: ${response.message.ifBlank { "Reintentos agotados" }}")
                 }
                 return@withContext Result.retry()
             }
@@ -91,7 +97,7 @@ class ModelDownloadWorker(
 
             // Check space
             if (totalBytes > spec.maxBytes || applicationContext.filesDir.usableSpace < (totalBytes - downloadedBytes)) {
-                 return@withContext fail("Espacio insuficiente o límite excedido")
+                return@withContext fail("Espacio insuficiente en disco o excede el límite máximo")
             }
 
             val randomAccessFile = RandomAccessFile(outputFile, "rw")
@@ -124,16 +130,19 @@ class ModelDownloadWorker(
             randomAccessFile.close()
 
             if (validateFile(outputFile, spec)) {
-                 return@withContext success(outputFile, spec)
+                return@withContext success(outputFile, spec)
             } else {
-                 outputFile.delete()
-                 return@withContext fail("Validación de archivo (Tamaño/SHA) fallida")
+                outputFile.delete()
+                return@withContext fail("Validación de archivo (Tamaño/SHA) fallida")
             }
 
         } catch (e: IOException) {
-            return@withContext Result.retry() // Falla de red, reintentar
+            if (runAttemptCount >= 3) {
+                return@withContext fail("Error de conexión: ${e.localizedMessage ?: "Fallo de red"}")
+            }
+            return@withContext Result.retry()
         } catch (e: Exception) {
-            return@withContext fail("Error inesperado: ${e.localizedMessage}")
+            return@withContext fail("Error inesperado: ${e.localizedMessage ?: e.javaClass.simpleName}")
         } finally {
             activeCall?.cancel()
             activeCall = null
@@ -146,7 +155,7 @@ class ModelDownloadWorker(
         val name = inputData.getString(ModelDownloadContract.KEY_MODEL_NAME) ?: return null
         val expected = inputData.getLong(ModelDownloadContract.KEY_EXPECTED_BYTES, -1L).takeIf { it != -1L }
         val sha256 = inputData.getString(ModelDownloadContract.KEY_SHA256)
-        val max = inputData.getLong(ModelDownloadContract.KEY_MAX_BYTES, 5L * 1024 * 1024 * 1024)
+        val max = inputData.getLong(ModelDownloadContract.KEY_MAX_BYTES, 10L * 1024 * 1024 * 1024)
 
         val formatStr = inputData.getString(ModelDownloadContract.KEY_FORMAT)
         val format = if (formatStr != null) {
@@ -205,7 +214,7 @@ class ModelDownloadWorker(
 
         val notification = NotificationCompat.Builder(applicationContext, ModelDownloadContract.CHANNEL_ID)
             .setContentTitle("Descargando: $title")
-            .setSmallIcon(android.R.drawable.stat_sys_download) // Icono genérico nativo
+            .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             .setProgress(100, progress, false)
             .build()
