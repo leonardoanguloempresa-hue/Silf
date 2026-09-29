@@ -35,7 +35,7 @@ class ChatViewModel(
         // Carga el historial persistido desde Room al iniciar
         viewModelScope.launch {
             chatRepository.getAllMessages().collect { entities ->
-                // Solo actualizar si no hay generación activa para no interferir con el stream
+                // Solo sincronizar si no hay generación activa para no pisar el stream
                 if (!_isGenerating.value) {
                     _messages.value = entities.map { entity ->
                         ChatMessage(
@@ -65,18 +65,36 @@ class ChatViewModel(
         _draftText.value = ""
         _isGenerating.value = true
 
+        val userMessageId = UUID.randomUUID().toString()
+        val responseId = UUID.randomUUID().toString()
+
+        // Mostrar de inmediato en UI el mensaje del usuario y el contenedor de la respuesta
+        _messages.value = _messages.value +
+                ChatMessage(id = userMessageId, text = prompt, isUser = true) +
+                ChatMessage(id = responseId, text = "", isUser = false)
+
         generationJob = viewModelScope.launch {
             // Guardar mensaje del usuario en Room
             chatRepository.insertMessage(text = prompt, isUser = true)
 
-            val responseId = UUID.randomUUID().toString()
-            // Agregar placeholder de respuesta en UI (Room lo actualizará al finalizar)
-            _messages.value = _messages.value + ChatMessage(id = responseId, text = "", isUser = false)
+            // Construir el prompt ChatML multi-turno con historial desde Room (últimos 10 mensajes)
+            val history = chatRepository.getLastMessages(limit = 10)
+
+            val chatMlPrompt = buildString {
+                append("<|im_start|>system\nEres Silf, un asistente útil y preciso.<|im_end|>\n")
+                // Formatear historial con etiquetas exactas: user y assistant
+                for (entity in history) {
+                    val role = if (entity.isUser) "user" else "assistant"
+                    append("<|im_start|>$role\n${entity.text.trim()}<|im_end|>\n")
+                }
+                // Abrir el turno del asistente para la generación
+                append("<|im_start|>assistant\n")
+            }
 
             val builder = StringBuilder()
             val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
             try {
-                llmEngine.generateResponseStream(prompt).collect { token ->
+                llmEngine.generateResponseStream(chatMlPrompt).collect { token ->
                     if (stopTokens.any { token.contains(it) }) {
                         stopGeneration()
                         return@collect
@@ -92,19 +110,20 @@ class ChatViewModel(
                         }
                     }
                 }
-                // Guardar respuesta completa en Room al terminar la generación
-                val finalResponse = builder.toString()
+                val finalResponse = builder.toString().trim()
+                _isGenerating.value = false
                 if (finalResponse.isNotEmpty()) {
                     chatRepository.insertMessage(text = finalResponse, isUser = false)
                 }
             } catch (c: CancellationException) {
-                // Guardar respuesta parcial si fue cancelada por el usuario
-                val partialResponse = builder.toString()
+                _isGenerating.value = false
+                val partialResponse = builder.toString().trim()
                 if (partialResponse.isNotEmpty()) {
                     chatRepository.insertMessage(text = partialResponse, isUser = false)
                 }
                 throw c
             } catch (t: Throwable) {
+                _isGenerating.value = false
                 _messages.value = _messages.value.map {
                     if (it.id == responseId) it.copy(text = "Error: ${t.message}") else it
                 }
@@ -134,4 +153,3 @@ class ChatViewModel(
         stopGeneration()
     }
 }
-

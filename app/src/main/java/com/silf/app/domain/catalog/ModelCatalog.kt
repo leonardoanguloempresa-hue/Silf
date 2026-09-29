@@ -17,7 +17,7 @@ object ModelCatalog {
         ModelEntry(
             id = "qwen2.5-1.5b-instruct-gguf",
             displayName = "Qwen 2.5 (1.5B) Instruct",
-            description = "Formato GGUF · Carga en Fase 5. Modelo ultraligero y rápido para respuestas directas.",
+            description = "Formato GGUF · Modelo ultraligero y rápido. Ideal para dispositivos con 4 GB de RAM.",
             sizeLabel = "1.12 GB",
             requiresLicense = false,
             downloadSpec = ModelDownloadSpec(
@@ -31,7 +31,7 @@ object ModelCatalog {
         ModelEntry(
             id = "qwen2.5-3b-instruct-gguf",
             displayName = "Qwen 2.5 (3B) Instruct",
-            description = "Formato GGUF · Carga en Fase 5. Excelente balance entre inteligencia y uso de RAM en móviles.",
+            description = "Formato GGUF · Balance óptimo entre inteligencia y RAM. Recomendado para la mayoría de dispositivos.",
             sizeLabel = "2.14 GB",
             requiresLicense = false,
             downloadSpec = ModelDownloadSpec(
@@ -43,18 +43,19 @@ object ModelCatalog {
             )
         ),
         ModelEntry(
-            id = "llama-3.2-3b-instruct-gguf",
-            displayName = "Llama 3.2 (3B) Instruct",
-            description = "Formato GGUF · Carga en Fase 5. Modelo avanzado de Meta. Requiere aceptar licencia en HF.",
-            sizeLabel = "2.18 GB",
-            requiresLicense = true, // Mantiene el botón deshabilitado
+            id = "qwen2.5-7b-instruct-gguf",
+            displayName = "Qwen 2.5 (7B) Instruct",
+            description = "Formato GGUF · Máxima inteligencia local. Requiere dispositivo con ≥8 GB de RAM. Opción más avanzada.",
+            sizeLabel = "4.68 GB",
+            requiresLicense = false,
             downloadSpec = ModelDownloadSpec(
-                modelId = "llama-3.2-3b-instruct-gguf",
-                url = "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-                fileName = "llama3_2_3b_instruct.gguf",
+                modelId = "qwen2.5-7b-instruct-gguf",
+                url = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
+                fileName = "qwen2_5_7b_instruct.gguf",
                 format = ModelFormat.GGUF,
-                maxBytes = 3L * 1024 * 1024 * 1024
+                maxBytes = 6L * 1024 * 1024 * 1024
             )
         )
     )
 }
+

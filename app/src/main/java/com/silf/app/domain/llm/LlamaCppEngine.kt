@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class LlamaCppEngine : LlmEngine {
     private val native = LlamaNative()
     private var modelHandle: Long = 0L
-    private var systemContext: String = "Eres Silf, un asistente de IA útil y conciso."
+    private var systemContext: String = "Eres Silf, un asistente útil y preciso."
 
     private val _lastError = MutableStateFlow<String?>(null)
     override val lastError: StateFlow<String?> = _lastError.asStateFlow()
@@ -41,6 +41,11 @@ class LlamaCppEngine : LlmEngine {
         }
     }
 
+    /**
+     * Genera una respuesta en streaming.
+     * @param prompt Prompt YA FORMATEADO en ChatML por el caller (ViewModel),
+     *               o texto sin procesar que se formateará con ChatML.
+     */
     override fun generateResponseStream(prompt: String): Flow<String> = callbackFlow {
         if (modelHandle == 0L) {
             trySend("Error: Modelo no cargado.")
@@ -48,19 +53,21 @@ class LlamaCppEngine : LlmEngine {
             return@callbackFlow
         }
 
-        // ChatML estricto — el mensaje del usuario se interpola con trim() para evitar
-        // que espacios/saltos accidentales corrompan el formato del template.
-        val userMsg = prompt.trim()
-        val formatted = "<|im_start|>system\nEres Silf, un asistente útil y preciso.<|im_end|>\n" +
-                        "<|im_start|>user\n${userMsg}<|im_end|>\n" +
-                        "<|im_start|>assistant\n"
+        val finalPrompt = if (prompt.trimStart().startsWith("<|im_start|>")) {
+            prompt
+        } else {
+            val userMsg = prompt.trim()
+            "<|im_start|>system\n$systemContext<|im_end|>\n" +
+            "<|im_start|>user\n${userMsg}<|im_end|>\n" +
+            "<|im_start|>assistant\n"
+        }
 
         val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
         // AtomicBoolean garantiza visibilidad entre el hilo de coroutine y el hilo nativo C++
-        // que llama a onToken() desde AttachCurrentThread. @Volatile no aplica a vars locales.
+        // que llama a onToken() desde AttachCurrentThread.
         val isStopped = AtomicBoolean(false)
 
-        native.generate(modelHandle, formatted, 512, 0.4f, object : TokenCallback {
+        native.generate(modelHandle, finalPrompt, 512, 0.4f, object : TokenCallback {
             override fun onToken(text: String) {
                 // Doble guardia: AtomicBoolean + canal ya cerrado
                 if (isStopped.get() || channel.isClosedForSend) return
@@ -89,8 +96,6 @@ class LlamaCppEngine : LlmEngine {
         })
 
         awaitClose { native.cancel(modelHandle) }
-
-
     }
 
     fun updateSystemContext(context: String) { systemContext = context }
@@ -105,6 +110,27 @@ class LlamaCppEngine : LlmEngine {
         if (modelHandle != 0L) {
             native.unload(modelHandle)
             modelHandle = 0L
+        }
+    }
+
+    companion object {
+        /**
+         * Reconstruye el prompt ChatML con historial de conversación.
+         */
+        fun formatChatPrompt(
+            history: List<Pair<String, Boolean>>,
+            currentUserMessage: String,
+            systemMessage: String = "Eres Silf, un asistente útil y preciso."
+        ): String {
+            return buildString {
+                append("<|im_start|>system\n$systemMessage<|im_end|>\n")
+                for ((text, isUser) in history) {
+                    val role = if (isUser) "user" else "assistant"
+                    append("<|im_start|>$role\n${text.trim()}<|im_end|>\n")
+                }
+                append("<|im_start|>user\n${currentUserMessage.trim()}<|im_end|>\n")
+                append("<|im_start|>assistant\n")
+            }
         }
     }
 }

@@ -19,6 +19,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Estado de conexión a un servidor Ollama remoto. */
+sealed class OllamaStatus {
+    object Idle : OllamaStatus()
+    object Connecting : OllamaStatus()
+    data class Connected(val url: String) : OllamaStatus()
+    data class Error(val message: String) : OllamaStatus()
+}
+
 class CatalogViewModel(
     private val repository: DownloadRepository,
     private val llmEngine: LlmEngine
@@ -36,6 +44,34 @@ class CatalogViewModel(
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    // --- Estado Ollama ---
+    private val _ollamaUrl = MutableStateFlow("http://192.168.1.1:11434")
+    val ollamaUrl: StateFlow<String> = _ollamaUrl.asStateFlow()
+
+    private val _ollamaStatus = MutableStateFlow<OllamaStatus>(OllamaStatus.Idle)
+    val ollamaStatus: StateFlow<OllamaStatus> = _ollamaStatus.asStateFlow()
+
+    fun onOllamaUrlChanged(url: String) { _ollamaUrl.value = url }
+
+    /**
+     * Intenta conectar a un servidor Ollama en la URL configurada.
+     * La lógica HTTP completa se implementará en la siguiente fase.
+     * Por ahora simula el estado Connecting → Connected/Error.
+     */
+    fun connectToOllama() {
+        val url = _ollamaUrl.value.trim()
+        if (url.isBlank()) {
+            _ollamaStatus.value = OllamaStatus.Error("La URL no puede estar vacía")
+            return
+        }
+        _ollamaStatus.value = OllamaStatus.Connecting
+        viewModelScope.launch {
+            // TODO Fase 9: Implementar llamada HTTP real a $url/api/tags para verificar conexión
+            // Por ahora placeholder — se marcará como activo en la siguiente fase
+            _ollamaStatus.value = OllamaStatus.Error("Conexión HTTP pendiente de implementación (Fase 9)")
+        }
+    }
 
     fun dismissError() {
         _errorMessage.value = null
@@ -115,3 +151,4 @@ class CatalogViewModel(
         }
     }
 }
+

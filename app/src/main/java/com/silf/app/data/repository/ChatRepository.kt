@@ -12,6 +12,10 @@ class ChatRepository(private val chatDao: ChatDao) {
         chatDao.insertMessage(ChatEntity(text = text, isUser = isUser))
     }
 
+    suspend fun getLastMessages(limit: Int = 10): List<ChatEntity> {
+        return chatDao.getLastMessages(limit).reversed()
+    }
+
     suspend fun clearHistory() {
         chatDao.clearHistory()
     }

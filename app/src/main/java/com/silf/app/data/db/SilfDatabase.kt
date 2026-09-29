@@ -19,7 +19,9 @@ abstract class SilfDatabase : RoomDatabase() {
                     context.applicationContext,
                     SilfDatabase::class.java,
                     "silf_database"
-                ).build()
+                )
+                .fallbackToDestructiveMigration()
+                .build()
                 INSTANCE = instance
                 instance
             }
