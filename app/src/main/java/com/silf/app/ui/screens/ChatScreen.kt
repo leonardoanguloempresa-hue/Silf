@@ -34,7 +34,9 @@ fun ChatScreen() {
     val context = LocalContext.current
     val application = context.applicationContext as SilfApplication
     val container = application.container
-    val chatViewModel: ChatViewModel = viewModel(factory = ChatViewModelFactory(container.llmEngine))
+    val chatViewModel: ChatViewModel = viewModel(
+        factory = ChatViewModelFactory(container.llmEngine, container.chatRepository)
+    )
 
     val messages by chatViewModel.messages.collectAsState()
     val draftText by chatViewModel.draftText.collectAsState()

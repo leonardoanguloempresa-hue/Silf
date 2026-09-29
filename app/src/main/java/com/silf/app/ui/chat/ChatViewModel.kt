@@ -2,6 +2,7 @@ package com.silf.app.ui.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.silf.app.data.repository.ChatRepository
 import com.silf.app.domain.llm.LlmEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -11,7 +12,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-class ChatViewModel(private val llmEngine: LlmEngine) : ViewModel() {
+class ChatViewModel(
+    private val llmEngine: LlmEngine,
+    private val chatRepository: ChatRepository
+) : ViewModel() {
+
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
@@ -26,6 +31,24 @@ class ChatViewModel(private val llmEngine: LlmEngine) : ViewModel() {
 
     private var generationJob: Job? = null
 
+    init {
+        // Carga el historial persistido desde Room al iniciar
+        viewModelScope.launch {
+            chatRepository.getAllMessages().collect { entities ->
+                // Solo actualizar si no hay generación activa para no interferir con el stream
+                if (!_isGenerating.value) {
+                    _messages.value = entities.map { entity ->
+                        ChatMessage(
+                            id = entity.id.toString(),
+                            text = entity.text,
+                            isUser = entity.isUser
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     fun onDraftChanged(text: String) { _draftText.value = text }
 
     fun dismissError() { _showErrorToast.value = null }
@@ -39,13 +62,17 @@ class ChatViewModel(private val llmEngine: LlmEngine) : ViewModel() {
             return
         }
 
-        _messages.value = _messages.value + ChatMessage(text = prompt, isUser = true)
         _draftText.value = ""
-        val responseId = UUID.randomUUID().toString()
-        _messages.value = _messages.value + ChatMessage(id = responseId, text = "", isUser = false)
         _isGenerating.value = true
 
         generationJob = viewModelScope.launch {
+            // Guardar mensaje del usuario en Room
+            chatRepository.insertMessage(text = prompt, isUser = true)
+
+            val responseId = UUID.randomUUID().toString()
+            // Agregar placeholder de respuesta en UI (Room lo actualizará al finalizar)
+            _messages.value = _messages.value + ChatMessage(id = responseId, text = "", isUser = false)
+
             val builder = StringBuilder()
             val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
             try {
@@ -65,7 +92,17 @@ class ChatViewModel(private val llmEngine: LlmEngine) : ViewModel() {
                         }
                     }
                 }
+                // Guardar respuesta completa en Room al terminar la generación
+                val finalResponse = builder.toString()
+                if (finalResponse.isNotEmpty()) {
+                    chatRepository.insertMessage(text = finalResponse, isUser = false)
+                }
             } catch (c: CancellationException) {
+                // Guardar respuesta parcial si fue cancelada por el usuario
+                val partialResponse = builder.toString()
+                if (partialResponse.isNotEmpty()) {
+                    chatRepository.insertMessage(text = partialResponse, isUser = false)
+                }
                 throw c
             } catch (t: Throwable) {
                 _messages.value = _messages.value.map {
@@ -87,6 +124,9 @@ class ChatViewModel(private val llmEngine: LlmEngine) : ViewModel() {
         stopGeneration()
         _messages.value = emptyList()
         _draftText.value = ""
+        viewModelScope.launch {
+            chatRepository.clearHistory()
+        }
     }
 
     override fun onCleared() {
@@ -94,3 +134,4 @@ class ChatViewModel(private val llmEngine: LlmEngine) : ViewModel() {
         stopGeneration()
     }
 }
+
