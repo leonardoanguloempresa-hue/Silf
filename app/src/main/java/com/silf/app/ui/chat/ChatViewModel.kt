@@ -47,11 +47,22 @@ class ChatViewModel(private val llmEngine: LlmEngine) : ViewModel() {
 
         generationJob = viewModelScope.launch {
             val builder = StringBuilder()
+            val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
             try {
                 llmEngine.generateResponseStream(prompt).collect { token ->
-                    builder.append(token)
-                    _messages.value = _messages.value.map {
-                        if (it.id == responseId) it.copy(text = builder.toString()) else it
+                    if (stopTokens.any { token.contains(it) }) {
+                        stopGeneration()
+                        return@collect
+                    }
+                    var cleanToken = token
+                    for (stop in stopTokens) {
+                        cleanToken = cleanToken.replace(stop, "")
+                    }
+                    if (cleanToken.isNotEmpty()) {
+                        builder.append(cleanToken)
+                        _messages.value = _messages.value.map {
+                            if (it.id == responseId) it.copy(text = builder.toString()) else it
+                        }
                     }
                 }
             } catch (c: CancellationException) {

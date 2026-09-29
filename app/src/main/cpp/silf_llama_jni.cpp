@@ -224,13 +224,18 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
 
             // Helper lambda para emitir un token hacia Kotlin vía callback
             auto emit_token = [&](llama_token tok) -> bool {
-                if (tok == llama_token_eos(infCtx->model) || tok == llama_token_eot(infCtx->model)) {
+                if (llama_token_is_eog(infCtx->model, tok) ||
+                    tok == llama_token_eos(infCtx->model) ||
+                    tok == llama_token_eot(infCtx->model)) {
                     return false; // EOS alcanzado
                 }
                 char buf[128];
                 int n = llama_token_to_piece(infCtx->model, tok, buf, sizeof(buf), 0, true);
                 if (n > 0) {
                     std::string piece(buf, n);
+                    if (piece.find("<|im_end|>") != std::string::npos || piece.find("<|endoftext|>") != std::string::npos) {
+                        return false; // Interceptar stop tokens en C++
+                    }
                     jstring jPiece = env->NewStringUTF(piece.c_str());
                     env->CallVoidMethod(callbackGlobal, onTokenMethod, jPiece);
                     env->DeleteLocalRef(jPiece);
@@ -348,7 +353,7 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
                     // Al menos un token especulado fue rechazado; podar el KV cache
                     llama_kv_cache_seq_rm(infCtx->ctx, 0, (llama_pos)n_past, -1);
 
-                    if (next_token == llama_token_eos(infCtx->model) || next_token == llama_token_eot(infCtx->model)) {
+                    if (llama_token_is_eog(infCtx->model, next_token) || next_token == llama_token_eos(infCtx->model) || next_token == llama_token_eot(infCtx->model)) {
                         break;
                     }
                     if (n_decode < max_tokens) {

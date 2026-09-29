@@ -31,6 +31,9 @@ class CatalogViewModel(
     private val _isLoadingModel = MutableStateFlow<String?>(null)
     val isLoadingModel: StateFlow<String?> = _isLoadingModel.asStateFlow()
 
+    private val _activeModelId = MutableStateFlow<String?>(null)
+    val activeModelId: StateFlow<String?> = _activeModelId.asStateFlow()
+
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
@@ -93,7 +96,9 @@ class CatalogViewModel(
                     llmEngine.loadModel(path)
                 }.getOrElse { false }
             }
-            if (!success) {
+            if (success) {
+                _activeModelId.value = modelId
+            } else {
                 _errorMessage.value = llmEngine.lastError.value ?: "Error: Memoria insuficiente para cargar el modelo"
             }
             _isLoadingModel.value = null

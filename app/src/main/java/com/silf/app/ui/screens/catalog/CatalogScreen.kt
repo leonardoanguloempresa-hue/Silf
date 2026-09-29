@@ -30,6 +30,7 @@ fun CatalogScreen(modifier: Modifier = Modifier) {
 
     val downloadStates by viewModel.downloadStates.collectAsState()
     val isLoadingModel by viewModel.isLoadingModel.collectAsState()
+    val activeModelId by viewModel.activeModelId.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
@@ -76,6 +77,7 @@ fun CatalogScreen(modifier: Modifier = Modifier) {
                     entry = entry,
                     state = state,
                     isLoading = isLoadingModel == entry.id,
+                    isActive = activeModelId == entry.id,
                     onDownloadClick = { viewModel.startDownload(entry.downloadSpec) },
                     onCancelClick = { viewModel.cancelDownload(entry.id) },
                     onLoadClick = { path -> viewModel.loadModel(entry.id, path) }
@@ -90,6 +92,7 @@ private fun ModelCard(
     entry: ModelEntry,
     state: DownloadState,
     isLoading: Boolean,
+    isActive: Boolean,
     onDownloadClick: () -> Unit,
     onCancelClick: () -> Unit,
     onLoadClick: (String) -> Unit
@@ -113,18 +116,43 @@ private fun ModelCard(
                     }
                 }
                 state is DownloadState.Completed -> {
-                    if (isLoading) {
-                        Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Cargando modelo...")
+                    when {
+                        isActive -> {
+                            Button(
+                                onClick = {},
+                                enabled = false,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    disabledContainerColor = Color(0xFF4CAF50),
+                                    disabledContentColor = Color.White
+                                )
+                            ) {
+                                Text("Modelo Activo", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
                         }
-                    } else {
-                        Button(onClick = { onLoadClick(state.filePath) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
-                            Text("Cargar Modelo en RAM", color = MaterialTheme.colorScheme.onPrimary)
+                        isLoading -> {
+                            Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Cargando modelo...")
+                            }
+                        }
+                        else -> {
+                            Button(
+                                onClick = { onLoadClick(state.filePath) },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Text("Cargar Modelo en RAM", color = MaterialTheme.colorScheme.onPrimary)
+                            }
                         }
                     }
-                    Text(text = "Descargado · Uso pendiente Fase 5", color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+                    Text(
+                        text = if (isActive) "Modelo activo y listo para usar" else "Descargado · Listo para cargar",
+                        color = Color(0xFF4CAF50),
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
                 }
                 state is DownloadState.InProgress -> {
                     val progress = state.progress?.div(100f) ?: 0f

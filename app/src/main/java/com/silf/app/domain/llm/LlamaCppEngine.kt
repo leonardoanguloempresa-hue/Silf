@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
 class LlamaCppEngine : LlmEngine {
     private val native = LlamaNative()
     private var modelHandle: Long = 0L
-    private var systemContext: String = "Eres Silf, un asistente útil y preciso."
+    private var systemContext: String = "Eres Silf, un asistente de IA útil y conciso."
 
     private val _lastError = MutableStateFlow<String?>(null)
     override val lastError: StateFlow<String?> = _lastError.asStateFlow()
@@ -47,13 +47,26 @@ class LlamaCppEngine : LlmEngine {
             return@callbackFlow
         }
 
-        val formatted = "<|im_start|>system\n$systemContext<|im_end|>\n<|im_start|>user\n$prompt<|im_end|>\n<|im_start|>assistant\n"
+        val formatted = "<|im_start|>system\nEres Silf, un asistente de IA útil y conciso.<|im_end|>\n<|im_start|>user\n$prompt<|im_end|>\n<|im_start|>assistant\n"
+        val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
+        var isStopped = false
 
         native.generate(modelHandle, formatted, 512, 0.7f, object : TokenCallback {
-            override fun onToken(text: String) { trySend(text) }
+            override fun onToken(text: String) {
+                if (isStopped) return
+                if (stopTokens.any { text.contains(it) }) {
+                    isStopped = true
+                    native.cancel(modelHandle)
+                    close()
+                    return
+                }
+                trySend(text)
+            }
             override fun onComplete() { close() }
             override fun onError(message: String) {
-                trySend("\n[Error: $message]")
+                if (!isStopped) {
+                    trySend("\n[Error: $message]")
+                }
                 close()
             }
         })
