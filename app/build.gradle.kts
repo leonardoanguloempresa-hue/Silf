@@ -103,5 +103,8 @@ dependencies {
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
+
+    // Rive - Avatar animado
+    implementation("app.rive:rive-android:9.13.10")
 }
 

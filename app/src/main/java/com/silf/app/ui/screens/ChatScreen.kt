@@ -64,16 +64,13 @@ fun ChatScreen() {
             }
         }
 
-        Box(
+        SilfAvatar(
+            isGenerating = isGenerating,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
                 .height(240.dp)
-                .border(1.dp, Color.Gray.copy(alpha = 0.5f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text = "Placeholder Rive", color = Color.Gray)
-        }
+        )
 
         LazyColumn(
             state = listState,
