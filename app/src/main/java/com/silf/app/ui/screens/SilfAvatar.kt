@@ -1,7 +1,9 @@
 package com.silf.app.ui.screens
 
 import android.graphics.Color as AndroidColor
+import android.util.Log
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Text
@@ -18,15 +20,20 @@ import app.rive.runtime.kotlin.core.Alignment
 import app.rive.runtime.kotlin.core.Fit
 import app.rive.runtime.kotlin.core.Loop
 
+private const val TAG = "SilfAvatar"
 private const val AVATAR_RESOURCE_NAME = "silf_avatar"
 private const val ANIM_IDLE = "idle"
 private const val ANIM_TALK = "talk"
 
 /**
- * Avatar Rive reactivo. Espera res/raw/silf_avatar.riv (se agrega manualmente).
- * Validacion estricta: si el recurso no existe (id == 0) NO se instancia RiveAnimationView
- * (un fallo nativo de inicializacion no se puede atrapar con runCatching).
- * Animaciones esperadas en el .riv: "idle" (reposo) y "talk" (generando).
+ * Avatar Rive reactivo con protección total contra crashes.
+ * Espera res/raw/silf_avatar.riv (se agrega manualmente).
+ *
+ * Protecciones:
+ * 1. Validación temprana: Si el recurso no existe en res/raw, no se instancia Rive y se muestra un placeholder.
+ * 2. Instanciación segura: La creación de RiveAnimationView y carga de recursos están encapsuladas en try/catch.
+ * 3. Animaciones tolerantes a fallos: Si el .riv no contiene las animaciones esperadas ('idle' o 'talk'),
+ *    la excepción se atrapa con e.printStackTrace() y la vista permanece estática o vacía sin provocar un crash.
  */
 @Composable
 fun SilfAvatar(isGenerating: Boolean, modifier: Modifier = Modifier) {
@@ -48,28 +55,84 @@ fun SilfAvatar(isGenerating: Boolean, modifier: Modifier = Modifier) {
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
-            RiveAnimationView(ctx).apply {
+            val container = FrameLayout(ctx).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
-                setBackgroundColor(AndroidColor.TRANSPARENT)
-                runCatching {
-                    setRiveResource(
+            }
+
+            try {
+                val riveView = RiveAnimationView(ctx).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    setBackgroundColor(AndroidColor.TRANSPARENT)
+                }
+
+                try {
+                    riveView.setRiveResource(
                         resId = resourceId,
                         fit = Fit.COVER,
                         alignment = Alignment.CENTER,
                         autoplay = false
                     )
-                    play(ANIM_IDLE, Loop.LOOP)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error al cargar recurso Rive silf_avatar.riv", e)
+                    e.printStackTrace()
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Fallo crítico al configurar recurso Rive", t)
+                    t.printStackTrace()
                 }
+
+                try {
+                    riveView.play(ANIM_IDLE, Loop.LOOP)
+                } catch (e: Exception) {
+                    Log.w(TAG, "No se encontró la animación '$ANIM_IDLE' en silf_avatar.riv", e)
+                    e.printStackTrace()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Fallo al reproducir '$ANIM_IDLE'", t)
+                    t.printStackTrace()
+                }
+
+                container.addView(riveView)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error durante la instanciación de RiveAnimationView", e)
+                e.printStackTrace()
+            } catch (t: Throwable) {
+                Log.e(TAG, "Fallo crítico al crear RiveAnimationView", t)
+                t.printStackTrace()
             }
+
+            container
         },
-        update = { view ->
+        update = { container ->
+            val riveView = container.getChildAt(0) as? RiveAnimationView ?: return@AndroidView
             val animation = if (isGenerating) ANIM_TALK else ANIM_IDLE
-            runCatching {
-                view.stop()
-                view.play(animation, Loop.LOOP)
+
+            try {
+                try {
+                    riveView.stop()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } catch (t: Throwable) {
+                    t.printStackTrace()
+                }
+
+                try {
+                    riveView.play(animation, Loop.LOOP)
+                } catch (e: Exception) {
+                    Log.w(TAG, "No se pudo reproducir la animación '$animation'", e)
+                    e.printStackTrace()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Fallo al reproducir '$animation'", t)
+                    t.printStackTrace()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } catch (t: Throwable) {
+                t.printStackTrace()
             }
         }
     )
