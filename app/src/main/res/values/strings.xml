@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Silf</string>
+    <string name="accessibility_service_label">Silf Asistente</string>
+    <string name="accessibility_service_description">Permite a Silf leer el contenido de la pantalla para ayudarte a interactuar con el dispositivo. El procesamiento ocurre 100% en local.</string>
 </resources>
