@@ -1,6 +1,7 @@
 package com.silf.app.domain.llm
 
 import android.util.Log
+import com.silf.app.accessibility.SilfAccessibilityService
 import com.silf.app.data.preferences.PreferencesManager
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -21,14 +22,15 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Motor de red para la arquitectura Cliente-Servidor de Silf.
- * Se comunica por Wi-Fi con el servidor Ollama o compatible que corre en la PC del usuario.
+ * Se comunica por Wi-Fi con el servidor Ollama en la PC del usuario.
  */
 class ApiEngine(
     private val preferencesManager: PreferencesManager,
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(120, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 ) : LlmEngine {
 
@@ -55,30 +57,42 @@ class ApiEngine(
             PreferencesManager.DEFAULT_MODEL_NAME
         }
 
-        // Construir JSON con formato Ollama (/api/generate)
-        val json = JSONObject().apply {
-            put("model", model)
-            put("stream", true)
-
+        // Pre-concatenar el screenSnapshot del servicio de accesibilidad como System Prompt temporal
+        val screenSnapshot = SilfAccessibilityService.screenSnapshot.value.trim()
+        val effectiveSystemPrompt = buildString {
             if (!systemPrompt.isNullOrBlank()) {
-                put("system", systemPrompt)
-                put("prompt", prompt)
+                append(systemPrompt.trim())
             } else if (prompt.contains("<|im_start|>system")) {
-                // Si el prompt viene con ChatML compuesto, separar el bloque system del turno del usuario
                 val sysPart = prompt.substringAfter("<|im_start|>system\n")
                     .substringBefore("<|im_end|>")
                     .trim()
-                val remaining = prompt.substringAfter("<|im_end|>\n").trim()
-                if (sysPart.isNotEmpty()) {
-                    put("system", sysPart)
-                }
-                put("prompt", remaining)
+                if (sysPart.isNotEmpty()) append(sysPart)
             } else {
-                put("prompt", prompt)
+                append("Eres Silf, un asistente útil y preciso.")
             }
+            if (screenSnapshot.isNotEmpty() && !contains(screenSnapshot)) {
+                append("\nInformación de la pantalla actual del usuario:\n$screenSnapshot")
+            }
+        }.trim()
+
+        val cleanPrompt = if (prompt.contains("<|im_start|>system")) {
+            prompt.substringAfter("<|im_end|>\n").trim()
+        } else {
+            prompt.trim()
         }
 
-        Log.d(TAG, "Enviando POST a $endpoint con modelo: $model")
+        // Construir JSON con formato Ollama (/api/generate)
+        // CRÍTICO: "stream": false para evitar abortos prematuros de socket
+        val json = JSONObject().apply {
+            put("model", model)
+            put("stream", false)
+            if (effectiveSystemPrompt.isNotEmpty()) {
+                put("system", effectiveSystemPrompt)
+            }
+            put("prompt", cleanPrompt)
+        }
+
+        Log.d(TAG, "Enviando POST (stream=false) a $endpoint con modelo: $model")
 
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val requestBody = json.toString().toRequestBody(mediaType)
@@ -112,43 +126,32 @@ class ApiEngine(
                         return
                     }
 
-                    val source = resp.body?.source()
-                    if (source == null) {
-                        close()
-                        return
-                    }
-
                     try {
-                        while (!source.exhausted() && !call.isCanceled()) {
-                            val line = source.readUtf8Line() ?: break
-                            if (line.isBlank()) continue
-                            try {
-                                val chunk = JSONObject(line)
-                                if (chunk.has("response")) {
-                                    val token = chunk.getString("response")
-                                    if (token.isNotEmpty()) {
-                                        trySend(token)
-                                    }
-                                } else if (chunk.has("message")) {
-                                    // Soporte para endpoints tipo /api/chat
-                                    val messageObj = chunk.optJSONObject("message")
-                                    val content = messageObj?.optString("content").orEmpty()
-                                    if (content.isNotEmpty()) {
-                                        trySend(content)
-                                    }
-                                }
-                                if (chunk.optBoolean("done", false)) {
-                                    break
-                                }
-                            } catch (_: Exception) {
-                                // Texto plano
-                                trySend(line)
+                        val responseBody = resp.body?.string().orEmpty()
+                        if (responseBody.isBlank()) {
+                            trySend("⚠️ Respuesta vacía de Ollama.")
+                            close()
+                            return
+                        }
+
+                        val jsonResp = JSONObject(responseBody)
+                        val text = when {
+                            jsonResp.has("response") -> jsonResp.getString("response")
+                            jsonResp.has("message") -> {
+                                val messageObj = jsonResp.optJSONObject("message")
+                                messageObj?.optString("content").orEmpty()
                             }
+                            jsonResp.has("error") -> "Error de Ollama: ${jsonResp.getString("error")}"
+                            else -> responseBody
+                        }
+
+                        if (text.isNotEmpty()) {
+                            trySend(text)
                         }
                     } catch (e: Exception) {
                         if (!call.isCanceled()) {
-                            Log.e(TAG, "Error leyendo stream de respuesta", e)
-                            trySend("\n[Error de transmisión: ${e.message}]")
+                            Log.e(TAG, "Error procesando respuesta de Ollama", e)
+                            trySend("⚠️ Error al parsear respuesta: ${e.message}")
                         }
                     } finally {
                         close()
@@ -171,7 +174,6 @@ class ApiEngine(
     }
 
     override fun isReady(): Boolean {
-        // En modo cliente estamos listos siempre que haya una URL configurada
         return preferencesManager.endpointUrl.value.isNotBlank()
     }
 

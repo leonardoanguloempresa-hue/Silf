@@ -1,12 +1,15 @@
 package com.silf.app.ui.screens
 
+import android.app.Activity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -84,6 +88,7 @@ private val EyeIcon: ImageVector by lazy {
 @Composable
 fun ChatScreen() {
     val context = LocalContext.current
+    val activity = context as? Activity
     val application = context.applicationContext as SilfApplication
     val container = application.container
     val chatViewModel: ChatViewModel = viewModel(
@@ -177,135 +182,198 @@ fun ChatScreen() {
         )
     }
 
-    Column(
+    // Contenedor raíz con fondo transparente. No tapa la pantalla del sistema.
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(Color.Transparent)
     ) {
-        Row(
+        // Área superior transparente: al pulsar en ella se cierra el asistente
+        Spacer(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Surface(
-                onClick = { showServerDialog = true },
-                shape = RoundedCornerShape(16.dp),
-                color = SilfCardSurface,
-                modifier = Modifier.padding(vertical = 4.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(if (currentEndpoint.isNotBlank()) Color(0xFF00E676) else Color.Gray)
-                    )
-                    Text(
-                        text = currentEndpoint.substringAfter("://").substringBefore("/api").ifBlank { "Configurar IP" },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White
-                    )
+                    activity?.finish()
                 }
-            }
-
-            Row {
-                IconButton(onClick = { showServerDialog = true }) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Configurar Servidor",
-                        tint = Color.White
-                    )
-                }
-                IconButton(onClick = { chatViewModel.clearHistory() }) {
-                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Limpiar historial", tint = Color.White)
-                }
-            }
-        }
-
-        SilfAvatar(
-            isGenerating = isGenerating,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .height(240.dp)
         )
 
-        LazyColumn(
-            state = listState,
+        // Panel inferior tipo BottomSheet del Asistente Silf
+        Surface(
             modifier = Modifier
-                .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 16.dp)
+                .align(Alignment.BottomCenter)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    enabled = true
+                ) {},
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = SilfCardSurface.copy(alpha = 0.97f),
+            shadowElevation = 16.dp,
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
         ) {
-            items(messages) { message ->
-                MessageBubble(message)
-            }
-        }
-
-        AnimatedVisibility(
-            visible = isVisionActive,
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically()
-        ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(
-                    imageVector = EyeIcon,
-                    contentDescription = "Visión activada",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp)
+                // Barra de arrastre (drag handle)
+                Box(
+                    modifier = Modifier
+                        .width(44.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(Color.Gray.copy(alpha = 0.4f))
                 )
-                Text(
-                    text = "Visión activada",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedTextField(
-                value = draftText,
-                onValueChange = chatViewModel::onDraftChanged,
-                placeholder = { Text("Escribe un mensaje...", color = Color.Gray) },
-                modifier = Modifier.weight(1f),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = Color.Gray
-                ),
-                keyboardActions = KeyboardActions(onSend = { chatViewModel.onSendMessage() }),
-                singleLine = true
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            IconButton(
-                onClick = { chatViewModel.onSendMessage() },
-                enabled = draftText.isNotBlank() && !isGenerating
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Enviar",
-                    tint = if (draftText.isNotBlank() && !isGenerating) MaterialTheme.colorScheme.primary else Color.Gray
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Fila superior: Chip de estado del servidor a la izquierda y botones de acción a la derecha
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Surface(
+                        onClick = { showServerDialog = true },
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color.Black.copy(alpha = 0.4f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(if (currentEndpoint.isNotBlank()) Color(0xFF00E676) else Color.Gray)
+                            )
+                            Text(
+                                text = currentEndpoint.substringAfter("://").substringBefore("/api").ifBlank { "Configurar IP" },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White
+                            )
+                        }
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { showServerDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Configurar Servidor",
+                                tint = Color.LightGray
+                            )
+                        }
+                        IconButton(onClick = { chatViewModel.clearHistory() }) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Limpiar historial",
+                                tint = Color.LightGray
+                            )
+                        }
+                        IconButton(onClick = { activity?.finish() }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cerrar Asistente",
+                                tint = Color.LightGray
+                            )
+                        }
+                    }
+                }
+
+                // Avatar de Silf en tamaño compacto
+                SilfAvatar(
+                    isGenerating = isGenerating,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp)
                 )
+
+                // Lista de mensajes recientes (scrollable con altura máxima para panel inferior)
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 200.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 6.dp)
+                ) {
+                    items(messages) { message ->
+                        MessageBubble(message)
+                    }
+                }
+
+                // Indicador visual de Visión Activada
+                AnimatedVisibility(
+                    visible = isVisionActive,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = EyeIcon,
+                            contentDescription = "Visión activada",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Visión activada (pantalla analizada)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Campo de texto y botón de envío
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = draftText,
+                        onValueChange = chatViewModel::onDraftChanged,
+                        placeholder = { Text("Pregunta sobre tu pantalla...", color = Color.Gray) },
+                        modifier = Modifier.weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = Color.Gray.copy(alpha = 0.5f),
+                            focusedContainerColor = Color.Black.copy(alpha = 0.35f),
+                            unfocusedContainerColor = Color.Black.copy(alpha = 0.2f)
+                        ),
+                        keyboardActions = KeyboardActions(onSend = { chatViewModel.onSendMessage() }),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = { chatViewModel.onSendMessage() },
+                        enabled = draftText.isNotBlank() && !isGenerating
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Enviar",
+                            tint = if (draftText.isNotBlank() && !isGenerating) MaterialTheme.colorScheme.primary else Color.Gray
+                        )
+                    }
+                }
             }
         }
     }
@@ -314,7 +382,7 @@ fun ChatScreen() {
 @Composable
 fun MessageBubble(message: ChatMessage) {
     val arrangement = if (message.isUser) Arrangement.End else Arrangement.Start
-    val backgroundColor = if (message.isUser) SilfCardSurface else Color.Transparent
+    val backgroundColor = if (message.isUser) SilfCardSurface else Color.Black.copy(alpha = 0.3f)
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -324,7 +392,7 @@ fun MessageBubble(message: ChatMessage) {
             modifier = Modifier
                 .clip(RoundedCornerShape(12.dp))
                 .background(backgroundColor)
-                .padding(12.dp)
+                .padding(10.dp)
         ) {
             Text(
                 text = message.text,
