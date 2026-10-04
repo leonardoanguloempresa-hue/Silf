@@ -1,5 +1,10 @@
 package com.silf.app.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -20,6 +25,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -28,6 +37,43 @@ import com.silf.app.ui.chat.ChatMessage
 import com.silf.app.ui.chat.ChatViewModel
 import com.silf.app.ui.chat.ChatViewModelFactory
 import com.silf.app.ui.theme.SilfCardSurface
+
+private val EyeIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Eye",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(
+            fill = SolidColor(Color.White),
+            fillAlpha = 1f,
+            stroke = null,
+            strokeAlpha = 1f,
+            pathFillType = PathFillType.NonZero
+        ) {
+            moveTo(12f, 4.5f)
+            curveTo(7f, 4.5f, 2.73f, 7.61f, 1f, 12f)
+            curveToRelative(1.73f, 4.39f, 6f, 7.5f, 11f, 7.5f)
+            reflectiveCurveToRelative(9.27f, -3.11f, 11f, -7.5f)
+            curveToRelative(-1.73f, -4.39f, -6f, -7.5f, -11f, -7.5f)
+            close()
+            moveTo(12f, 17f)
+            curveToRelative(-2.76f, 0f, -5f, -2.24f, -5f, -5f)
+            reflectiveCurveToRelative(2.24f, -5f, 5f, -5f)
+            reflectiveCurveToRelative(5f, 2.24f, 5f, 5f)
+            reflectiveCurveToRelative(-2.24f, 5f, -5f, 5f)
+            close()
+            moveTo(12f, 9f)
+            curveToRelative(-1.66f, 0f, -3f, 1.34f, -3f, 3f)
+            reflectiveCurveToRelative(1.34f, 3f, 3f, 3f)
+            reflectiveCurveToRelative(3f, -1.34f, 3f, -3f)
+            reflectiveCurveToRelative(-1.34f, -3f, -3f, -3f)
+            close()
+        }
+    }.build()
+}
 
 @Composable
 fun ChatScreen() {
@@ -41,6 +87,7 @@ fun ChatScreen() {
     val messages by chatViewModel.messages.collectAsState()
     val draftText by chatViewModel.draftText.collectAsState()
     val isGenerating by chatViewModel.isGenerating.collectAsState()
+    val isVisionActive by chatViewModel.isVisionActive.collectAsState()
 
     val listState = rememberLazyListState()
 
@@ -83,6 +130,32 @@ fun ChatScreen() {
         ) {
             items(messages) { message ->
                 MessageBubble(message)
+            }
+        }
+
+        AnimatedVisibility(
+            visible = isVisionActive,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = EyeIcon,
+                    contentDescription = "Visión activada",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "Visión activada",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
 

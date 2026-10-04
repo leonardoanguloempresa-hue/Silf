@@ -2,19 +2,24 @@ package com.silf.app.ui.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.silf.app.accessibility.SilfAccessibilityService
 import com.silf.app.data.repository.ChatRepository
 import com.silf.app.domain.llm.LlmEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
 
 class ChatViewModel(
     private val llmEngine: LlmEngine,
-    private val chatRepository: ChatRepository
+    private val chatRepository: ChatRepository,
+    private val screenSnapshotFlow: StateFlow<String> = SilfAccessibilityService.screenSnapshot
 ) : ViewModel() {
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
@@ -28,6 +33,16 @@ class ChatViewModel(
 
     private val _showErrorToast = MutableStateFlow<String?>(null)
     val showErrorToast: StateFlow<String?> = _showErrorToast.asStateFlow()
+
+    val screenSnapshot: StateFlow<String> = screenSnapshotFlow
+
+    val isVisionActive: StateFlow<Boolean> = screenSnapshotFlow
+        .map { it.isNotBlank() && SilfAccessibilityService.isEnabled }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = screenSnapshotFlow.value.isNotBlank() && SilfAccessibilityService.isEnabled
+        )
 
     private var generationJob: Job? = null
 
@@ -80,8 +95,13 @@ class ChatViewModel(
             // Construir el prompt ChatML multi-turno con historial desde Room (últimos 10 mensajes)
             val history = chatRepository.getLastMessages(limit = 10)
 
+            val currentSnapshot = screenSnapshotFlow.value.trim()
+
             val chatMlPrompt = buildString {
                 append("<|im_start|>system\nEres Silf, un asistente útil y preciso.<|im_end|>\n")
+                if (currentSnapshot.isNotEmpty()) {
+                    append("<|im_start|>system\nInformación de la pantalla actual del usuario:\n$currentSnapshot<|im_end|>\n")
+                }
                 // Formatear historial con etiquetas exactas: user y assistant
                 for (entity in history) {
                     val role = if (entity.isUser) "user" else "assistant"

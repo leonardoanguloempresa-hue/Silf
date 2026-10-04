@@ -29,10 +29,18 @@ class SilfAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         Log.i(TAG, "Servicio de accesibilidad conectado")
+        try {
+            val snapshot = captureScreen()
+            if (snapshot != null) _screenSnapshot.value = snapshot
+        } catch (e: Exception) {
+            Log.e(TAG, "Error capturando pantalla inicial", e)
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        // No sobreescribir el snapshot con la pantalla de la propia aplicación Silf
+        if (event.packageName == packageName) return
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
@@ -52,16 +60,20 @@ class SilfAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
-        if (instance === this) instance = null
+        if (instance === this) {
+            instance = null
+            _screenSnapshot.value = ""
+        }
         super.onDestroy()
     }
 
     /**
      * Lee la ventana activa y devuelve su representación simplificada,
-     * o null si no hay ventana disponible.
+     * o null si no hay ventana disponible o si la ventana pertenece a Silf.
      */
     fun captureScreen(): String? {
         val root = rootInActiveWindow ?: return null
+        if (root.packageName == packageName) return null
         val sb = StringBuilder()
         sb.append("[app: ").append(root.packageName ?: "desconocida").append("]\n")
         val counter = intArrayOf(0)
