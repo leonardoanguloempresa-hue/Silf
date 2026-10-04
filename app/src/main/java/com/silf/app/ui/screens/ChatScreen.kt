@@ -11,16 +11,21 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,6 +35,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.silf.app.SilfApplication
@@ -81,13 +87,17 @@ fun ChatScreen() {
     val application = context.applicationContext as SilfApplication
     val container = application.container
     val chatViewModel: ChatViewModel = viewModel(
-        factory = ChatViewModelFactory(container.llmEngine, container.chatRepository)
+        factory = ChatViewModelFactory(container.llmEngine, container.chatRepository, container.preferencesManager)
     )
 
     val messages by chatViewModel.messages.collectAsState()
     val draftText by chatViewModel.draftText.collectAsState()
     val isGenerating by chatViewModel.isGenerating.collectAsState()
     val isVisionActive by chatViewModel.isVisionActive.collectAsState()
+    val currentEndpoint by chatViewModel.endpointUrl.collectAsState()
+    val currentModel by chatViewModel.modelName.collectAsState()
+
+    var showServerDialog by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
 
@@ -97,17 +107,124 @@ fun ChatScreen() {
         }
     }
 
+    if (showServerDialog) {
+        var tempUrl by remember(currentEndpoint) { mutableStateOf(currentEndpoint) }
+        var tempModel by remember(currentModel) { mutableStateOf(currentModel) }
+
+        AlertDialog(
+            onDismissRequest = { showServerDialog = false },
+            title = {
+                Text(
+                    text = "Servidor PC (Ollama)",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Ingresa la IP local de tu PC donde corre Ollama:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                    OutlinedTextField(
+                        value = tempUrl,
+                        onValueChange = { tempUrl = it },
+                        label = { Text("URL del Endpoint") },
+                        placeholder = { Text("http://192.168.1.80:11434/api/generate") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = Color.Gray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = tempModel,
+                        onValueChange = { tempModel = it },
+                        label = { Text("Modelo") },
+                        placeholder = { Text("qwen2.5:3b") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = Color.Gray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        chatViewModel.updateEndpointUrl(tempUrl)
+                        chatViewModel.updateModelName(tempModel)
+                        showServerDialog = false
+                    }
+                ) {
+                    Text("Guardar", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showServerDialog = false }) {
+                    Text("Cancelar", color = Color.Gray)
+                }
+            },
+            containerColor = SilfCardSurface
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.End
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            IconButton(onClick = { chatViewModel.clearHistory() }) {
-                Icon(imageVector = Icons.Default.Delete, contentDescription = "Limpiar historial", tint = Color.White)
+            Surface(
+                onClick = { showServerDialog = true },
+                shape = RoundedCornerShape(16.dp),
+                color = SilfCardSurface,
+                modifier = Modifier.padding(vertical = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(if (currentEndpoint.isNotBlank()) Color(0xFF00E676) else Color.Gray)
+                    )
+                    Text(
+                        text = currentEndpoint.substringAfter("://").substringBefore("/api").ifBlank { "Configurar IP" },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White
+                    )
+                }
+            }
+
+            Row {
+                IconButton(onClick = { showServerDialog = true }) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Configurar Servidor",
+                        tint = Color.White
+                    )
+                }
+                IconButton(onClick = { chatViewModel.clearHistory() }) {
+                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Limpiar historial", tint = Color.White)
+                }
             }
         }
 

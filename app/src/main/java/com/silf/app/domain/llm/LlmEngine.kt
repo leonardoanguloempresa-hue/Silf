@@ -7,6 +7,7 @@ interface LlmEngine {
     val lastError: StateFlow<String?>
     suspend fun loadModel(filePath: String): Boolean
     fun generateResponseStream(prompt: String): Flow<String>
+    fun generateResponseStream(prompt: String, systemPrompt: String? = null): Flow<String> = generateResponseStream(prompt)
     fun stopGeneration()
     fun isReady(): Boolean
     fun unload()

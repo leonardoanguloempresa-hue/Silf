@@ -3,6 +3,7 @@ package com.silf.app.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.silf.app.accessibility.SilfAccessibilityService
+import com.silf.app.data.preferences.PreferencesManager
 import com.silf.app.data.repository.ChatRepository
 import com.silf.app.domain.llm.LlmEngine
 import kotlinx.coroutines.CancellationException
@@ -19,7 +20,8 @@ import java.util.UUID
 class ChatViewModel(
     private val llmEngine: LlmEngine,
     private val chatRepository: ChatRepository,
-    private val screenSnapshotFlow: StateFlow<String> = SilfAccessibilityService.screenSnapshot
+    private val screenSnapshotFlow: StateFlow<String> = SilfAccessibilityService.screenSnapshot,
+    private val preferencesManager: PreferencesManager? = null
 ) : ViewModel() {
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
@@ -43,6 +45,19 @@ class ChatViewModel(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = screenSnapshotFlow.value.isNotBlank() && SilfAccessibilityService.isEnabled
         )
+
+    val endpointUrl: StateFlow<String> =
+        preferencesManager?.endpointUrl ?: MutableStateFlow(PreferencesManager.DEFAULT_ENDPOINT_URL)
+    val modelName: StateFlow<String> =
+        preferencesManager?.modelName ?: MutableStateFlow(PreferencesManager.DEFAULT_MODEL_NAME)
+
+    fun updateEndpointUrl(url: String) {
+        preferencesManager?.setEndpointUrl(url)
+    }
+
+    fun updateModelName(model: String) {
+        preferencesManager?.setModelName(model)
+    }
 
     private var generationJob: Job? = null
 
@@ -73,7 +88,7 @@ class ChatViewModel(
         if (prompt.isEmpty() || _isGenerating.value) return
 
         if (!llmEngine.isReady()) {
-            _showErrorToast.value = "Carga un modelo en el catálogo primero"
+            _showErrorToast.value = "Configura la IP del servidor en Ajustes"
             return
         }
 
@@ -89,32 +104,35 @@ class ChatViewModel(
                 ChatMessage(id = responseId, text = "", isUser = false)
 
         generationJob = viewModelScope.launch {
-            // Guardar mensaje del usuario en Room
+            // Guardar mensaje del usuario en Room (solo el texto del usuario)
             chatRepository.insertMessage(text = prompt, isUser = true)
 
-            // Construir el prompt ChatML multi-turno con historial desde Room (últimos 10 mensajes)
+            // Obtener historial reciente desde Room (últimos 10 mensajes)
             val history = chatRepository.getLastMessages(limit = 10)
 
             val currentSnapshot = screenSnapshotFlow.value.trim()
 
-            val chatMlPrompt = buildString {
-                append("<|im_start|>system\nEres Silf, un asistente útil y preciso.<|im_end|>\n")
+            // Inyectar el snapshot de pantalla de accesibilidad como System Prompt para el LLM
+            val systemPrompt = buildString {
+                append("Eres Silf, un asistente útil y preciso.")
                 if (currentSnapshot.isNotEmpty()) {
-                    append("<|im_start|>system\nInformación de la pantalla actual del usuario:\n$currentSnapshot<|im_end|>\n")
+                    append("\nInformación de la pantalla actual del usuario:\n$currentSnapshot")
                 }
-                // Formatear historial con etiquetas exactas: user y assistant
+            }
+
+            // Construir el prompt de turnos para el modelo
+            val conversationPrompt = buildString {
                 for (entity in history) {
                     val role = if (entity.isUser) "user" else "assistant"
                     append("<|im_start|>$role\n${entity.text.trim()}<|im_end|>\n")
                 }
-                // Abrir el turno del asistente para la generación
                 append("<|im_start|>assistant\n")
             }
 
             val builder = StringBuilder()
             val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
             try {
-                llmEngine.generateResponseStream(chatMlPrompt).collect { token ->
+                llmEngine.generateResponseStream(conversationPrompt, systemPrompt).collect { token ->
                     if (stopTokens.any { token.contains(it) }) {
                         stopGeneration()
                         return@collect
