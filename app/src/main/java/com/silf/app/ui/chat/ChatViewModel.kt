@@ -104,38 +104,24 @@ class ChatViewModel(
                 ChatMessage(id = responseId, text = "", isUser = false)
 
         generationJob = viewModelScope.launch {
-            // Guardar mensaje del usuario en Room (solo el texto del usuario)
+            // Guardar mensaje del usuario en Room
             chatRepository.insertMessage(text = prompt, isUser = true)
 
-            // Obtener historial reciente desde Room (últimos 10 mensajes)
-            val history = chatRepository.getLastMessages(limit = 10)
+            val screenSnapshot = screenSnapshotFlow.value.trim()
+            val userMessage = prompt.trim()
 
-            val currentSnapshot = screenSnapshotFlow.value.trim()
-
-            // System Prompt para el Agente con snapshot de pantalla y reglas de clic
-            val systemPrompt = buildString {
-                append("Eres un agente que controla el teléfono. ")
-                if (currentSnapshot.isNotEmpty()) {
-                    append("Ves esta pantalla:\n").append(currentSnapshot).append("\n")
-                }
-                append("Para hacer clic en un elemento, debes responder ÚNICAMENTE con el comando [CLICK: número_de_índice].")
-            }
-
-            // Construir el prompt de turnos para el modelo
-            val conversationPrompt = buildString {
-                for (entity in history) {
-                    val role = if (entity.isUser) "user" else "assistant"
-                    append("<|im_start|>$role\n${entity.text.trim()}<|im_end|>\n")
-                }
-                append("<|im_start|>assistant\n")
-            }
+            // Formato ChatML Estricto para Qwen 2.5:
+            // Envuelve el prompt crudo exactamente como requiere el modelo sin formatos genéricos
+            val strictPrompt = "<|im_start|>system\nEres Silf. TIENES PERMISOS TOTALES para controlar este teléfono. Pantalla actual:\n$screenSnapshot\nTu única forma de responder es con el comando [CLICK: ID] correspondiente al botón que el usuario quiere tocar. No digas nada más.<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
 
             val builder = StringBuilder()
             val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
-            val clickRegex = Regex("""\[CLICK:\s*(\d+)\]""", RegexOption.IGNORE_CASE)
+            val clickRegex = Regex("""\[CLICK:\s*(\d+)\]?""", RegexOption.IGNORE_CASE)
+            var clickHandled = false
+            var clickedId: Int? = null
 
             try {
-                llmEngine.generateResponseStream(conversationPrompt, systemPrompt).collect { token ->
+                llmEngine.generateResponseStream(strictPrompt).collect { token ->
                     if (stopTokens.any { token.contains(it) }) {
                         stopGeneration()
                         return@collect
@@ -148,16 +134,25 @@ class ChatViewModel(
                         builder.append(cleanToken)
                         val currentText = builder.toString()
 
-                        // Si ya se generó el comando completo de click, detener generación
-                        if (clickRegex.containsMatchIn(currentText)) {
-                            stopGeneration()
-                            return@collect
+                        // Intercepción: Detección temprana de la cadena [CLICK:
+                        val match = clickRegex.find(currentText)
+                        if (match != null) {
+                            val id = match.groupValues[1].toIntOrNull()
+                            if (id != null && !clickHandled) {
+                                clickHandled = true
+                                clickedId = id
+                                SilfAccessibilityService.instance?.performClickOnNode(id)
+                                stopGeneration()
+                                return@collect
+                            }
                         }
 
-                        // Limpiar comando de la vista en tiempo real para no mostrarlo
-                        val textToDisplay = currentText.replace(clickRegex, "").trim()
-                        _messages.value = _messages.value.map {
-                            if (it.id == responseId) it.copy(text = textToDisplay) else it
+                        // Limpiar comando de la vista en tiempo real para no mostrar comandos de control en UI
+                        val textToDisplay = currentText.replace(Regex("""\[CLICK:\s*\d*\]?""", RegexOption.IGNORE_CASE), "").trim()
+                        if (textToDisplay.isNotEmpty()) {
+                            _messages.value = _messages.value.map {
+                                if (it.id == responseId) it.copy(text = textToDisplay) else it
+                            }
                         }
                     }
                 }
@@ -170,43 +165,32 @@ class ChatViewModel(
             }
 
             val fullGenerated = builder.toString()
-            val clickMatch = clickRegex.find(fullGenerated)
 
-            if (clickMatch != null) {
-                val nodeIndex = clickMatch.groupValues[1].toIntOrNull()
-                if (nodeIndex != null) {
-                    // Ejecutar el clic en el servicio de accesibilidad
-                    val clickSuccess = SilfAccessibilityService.performClick(nodeIndex)
-
-                    // Extraer y no mostrar el comando [CLICK: X] en el chat
-                    val remainingText = fullGenerated.replace(clickRegex, "").trim()
-                    val textToDisplay = if (remainingText.isNotEmpty()) {
-                        remainingText
-                    } else {
-                        if (clickSuccess) "Clic ejecutado en elemento [$nodeIndex]" else "No se pudo pulsar el elemento [$nodeIndex]"
-                    }
-
-                    _messages.value = _messages.value.map {
-                        if (it.id == responseId) it.copy(text = textToDisplay) else it
-                    }
-                    chatRepository.insertMessage(text = textToDisplay, isUser = false)
-                } else {
-                    val remainingText = fullGenerated.replace(clickRegex, "").trim()
-                    _messages.value = _messages.value.map {
-                        if (it.id == responseId) it.copy(text = remainingText) else it
-                    }
-                    if (remainingText.isNotEmpty()) {
-                        chatRepository.insertMessage(text = remainingText, isUser = false)
+            // Si no se interceptó durante el streaming, interceptar al finalizar
+            if (!clickHandled) {
+                val match = clickRegex.find(fullGenerated)
+                if (match != null) {
+                    val id = match.groupValues[1].toIntOrNull()
+                    if (id != null) {
+                        clickHandled = true
+                        clickedId = id
+                        SilfAccessibilityService.instance?.performClickOnNode(id)
                     }
                 }
-            } else {
-                val finalResponse = fullGenerated.trim()
-                _messages.value = _messages.value.map {
-                    if (it.id == responseId) it.copy(text = finalResponse) else it
-                }
-                if (finalResponse.isNotEmpty()) {
-                    chatRepository.insertMessage(text = finalResponse, isUser = false)
-                }
+            }
+
+            val remainingText = fullGenerated.replace(Regex("""\[CLICK:\s*\d+\]?""", RegexOption.IGNORE_CASE), "").trim()
+            val textToDisplay = when {
+                remainingText.isNotEmpty() -> remainingText
+                clickHandled && clickedId != null -> "Pulsando elemento [$clickedId]"
+                else -> fullGenerated.trim()
+            }
+
+            _messages.value = _messages.value.map {
+                if (it.id == responseId) it.copy(text = textToDisplay) else it
+            }
+            if (textToDisplay.isNotEmpty()) {
+                chatRepository.insertMessage(text = textToDisplay, isUser = false)
             }
         }
     }

@@ -50,7 +50,8 @@
             android:exported="true"
             android:theme="@style/Theme.Silf.Transparent"
             android:excludeFromRecents="true"
-            android:launchMode="singleTop">
+            android:launchMode="singleInstance"
+            android:taskAffinity=".Assistant">
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
                 <category android:name="android.intent.category.DEFAULT" />

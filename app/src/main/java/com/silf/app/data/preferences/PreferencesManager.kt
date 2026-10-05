@@ -32,10 +32,23 @@ class PreferencesManager(context: Context) {
         _modelName.value = trimmed
     }
 
+    fun getLastLoadedGgufPath(): String? {
+        return prefs.getString(KEY_LAST_GGUF_PATH, null)
+    }
+
+    fun setLastLoadedGgufPath(path: String?) {
+        if (path == null) {
+            prefs.edit().remove(KEY_LAST_GGUF_PATH).apply()
+        } else {
+            prefs.edit().putString(KEY_LAST_GGUF_PATH, path).apply()
+        }
+    }
+
     companion object {
-        private const val PREFS_NAME = "silf_client_prefs"
+        const val PREFS_NAME = "silf_client_prefs"
         private const val KEY_ENDPOINT_URL = "endpoint_url"
         private const val KEY_MODEL_NAME = "model_name"
+        const val KEY_LAST_GGUF_PATH = "last_loaded_gguf_path"
 
         const val DEFAULT_ENDPOINT_URL = "http://192.168.1.80:11434/api/generate"
         const val DEFAULT_MODEL_NAME = "qwen2.5:3b"

@@ -14,7 +14,7 @@ class AppContainer(context: Context) {
     }
 
     val llmEngine: LlmEngine by lazy {
-        LlamaCppEngine()
+        LlamaCppEngine.getInstance(context.applicationContext)
     }
 
     val downloadRepository: DownloadRepository by lazy {

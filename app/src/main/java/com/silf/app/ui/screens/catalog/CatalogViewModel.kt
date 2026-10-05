@@ -10,6 +10,7 @@ import com.silf.app.domain.catalog.ModelEntry
 import com.silf.app.domain.download.DownloadRepository
 import com.silf.app.domain.download.DownloadState
 import com.silf.app.domain.download.ModelDownloadSpec
+import com.silf.app.domain.llm.LlamaCppEngine
 import com.silf.app.domain.llm.LlmEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +57,22 @@ class CatalogViewModel(
             }
         }
         _downloadStates.value = initialMap
+
+        // Sincronizar modelo activo con el estado del Singleton (soporta auto-load)
+        viewModelScope.launch {
+            (llmEngine as? LlamaCppEngine)?.loadedModelPath?.collect { loadedPath ->
+                if (loadedPath != null) {
+                    val matchingEntry = availableModels.find { entry ->
+                        repository.getDownloadedModelFile(entry.downloadSpec.fileName).absolutePath == loadedPath
+                    }
+                    if (matchingEntry != null) {
+                        _activeModelId.value = matchingEntry.id
+                    }
+                } else if (!llmEngine.isReady()) {
+                    _activeModelId.value = null
+                }
+            }
+        }
 
         // Observar descargas activas en segundo plano con WorkManager
         viewModelScope.launch {
