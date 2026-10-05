@@ -42,8 +42,15 @@ class SilfAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        // No sobreescribir el snapshot con la pantalla de la propia aplicación Silf
-        if (event.packageName == packageName) return
+        val eventPkg = event.packageName?.toString().orEmpty()
+        // Cuando el evento provenga del paquete de Silf (com.silf.app o packageName),
+        // NO borres ni actualices la lista actual de nodos (savedNodes) ni el screenSnapshot.
+        // Debes conservar intacta la última "foto" de la pantalla que el usuario estaba viendo antes de invocar a Silf.
+        if (eventPkg == packageName || eventPkg == "com.silf.app") {
+            Log.d(TAG, "Evento ignorado de Silf ($eventPkg): conservando snapshot congelado (${savedNodes.size} nodos)")
+            return
+        }
+
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
@@ -86,7 +93,8 @@ class SilfAccessibilityService : AccessibilityService() {
             val windowList = windows
             for (w in windowList) {
                 val winRoot = w.root ?: continue
-                if (winRoot.packageName != packageName) {
+                val pkg = winRoot.packageName?.toString().orEmpty()
+                if (pkg != packageName && pkg != "com.silf.app") {
                     return winRoot
                 } else {
                     recycleCompat(winRoot)
@@ -102,17 +110,24 @@ class SilfAccessibilityService : AccessibilityService() {
      * Lee la ventana activa y devuelve su representación simplificada,
      * almacenando en savedNodes los nodos correspondientes a cada índice.
      * FILTRA e IGNORA la propia interfaz de Silf para evitar confusiones al LLM.
+     * Si la ventana activa es de Silf y no se encuentra otra ventana, conserva
+     * intactos savedNodes y el snapshot congelado.
      */
     fun captureScreen(): String? {
         var root = rootInActiveWindow
-        if (root == null || root.packageName == packageName) {
+        val isSilfActive = root == null || root.packageName == packageName || root.packageName?.toString() == "com.silf.app"
+
+        if (isSilfActive) {
             recycleCompat(root)
             root = findTargetWindowRoot()
         }
 
-        if (root == null || root.packageName == packageName) {
+        // Si la ventana encontrada sigue siendo de Silf o no existe,
+        // NO borramos savedNodes ni _screenSnapshot para preservar intacta la última foto congelada.
+        if (root == null || root.packageName == packageName || root.packageName?.toString() == "com.silf.app") {
             recycleCompat(root)
-            return null
+            Log.d(TAG, "Ventana externa no-Silf no disponible. Conservando snapshot y nodos congelados (${savedNodes.size} nodos).")
+            return _screenSnapshot.value.takeIf { it.isNotBlank() }
         }
 
         clearSavedNodes()
@@ -125,7 +140,10 @@ class SilfAccessibilityService : AccessibilityService() {
         } finally {
             recycleCompat(root)
         }
-        return sb.toString().trimEnd()
+        val result = sb.toString().trimEnd()
+        _screenSnapshot.value = result
+        Log.i(TAG, "Snapshot congelado actualizado para ${root.packageName}: ${counter[0]} nodos indexados")
+        return result
     }
 
     /**
@@ -297,9 +315,9 @@ class SilfAccessibilityService : AccessibilityService() {
             }
         }
 
-        // 2. Si no estaba en cache o bounds vacíos, buscar de forma fresca en el árbol activo
+        // 2. Si no estaba en la lista congelada o bounds vacíos, buscar de forma fresca en el árbol activo
         var root = rootInActiveWindow
-        if (root == null || root.packageName == packageName) {
+        if (root == null || root.packageName == packageName || root.packageName?.toString() == "com.silf.app") {
             recycleCompat(root)
             root = findTargetWindowRoot()
         }
@@ -345,7 +363,7 @@ class SilfAccessibilityService : AccessibilityService() {
     fun performClickOnNode(nodeText: String): Rect? {
         Log.i(TAG, "Solicitado clic en nodo con texto: \"$nodeText\"")
         var root = rootInActiveWindow
-        if (root == null || root.packageName == packageName) {
+        if (root == null || root.packageName == packageName || root.packageName?.toString() == "com.silf.app") {
             recycleCompat(root)
             root = findTargetWindowRoot()
         }
@@ -354,7 +372,8 @@ class SilfAccessibilityService : AccessibilityService() {
             val matchingNodes = root.findAccessibilityNodeInfosByText(nodeText)
             for (node in matchingNodes) {
                 try {
-                    if (node.packageName == packageName) continue
+                    val pkg = node.packageName?.toString().orEmpty()
+                    if (pkg == packageName || pkg == "com.silf.app") continue
                     val target = findClickableTarget(node)
                     val rect = Rect()
                     target.getBoundsInScreen(rect)
@@ -388,7 +407,8 @@ class SilfAccessibilityService : AccessibilityService() {
         targetIndex: Int
     ): AccessibilityNodeInfo? {
         if (depth > MAX_DEPTH || counter[0] > targetIndex) return null
-        if (node.packageName == packageName) return null
+        val pkg = node.packageName?.toString().orEmpty()
+        if (pkg == packageName || pkg == "com.silf.app") return null
         if (!node.isVisibleToUser) return null
 
         val text = node.text?.toString()?.trim().orEmpty()
@@ -453,10 +473,16 @@ class SilfAccessibilityService : AccessibilityService() {
         }
 
         /**
-         * Obtiene el snapshot fresco y en tiempo real de la pantalla activa sin usar valores en caché.
+         * Obtiene el snapshot congelado de la pantalla activa para el prompt.
+         * Si ya existe un snapshot previo y nodos guardados, se conservan intactos
+         * para no borrar la pantalla que el usuario estaba viendo antes de abrir Silf.
          */
         fun getFreshScreenSnapshot(): String {
             val inst = instance ?: return _screenSnapshot.value
+            if (_screenSnapshot.value.isNotBlank() && inst.savedNodes.isNotEmpty()) {
+                Log.d(TAG, "getFreshScreenSnapshot: usando snapshot congelado con ${inst.savedNodes.size} nodos")
+                return _screenSnapshot.value
+            }
             return try {
                 val fresh = inst.captureScreen()
                 if (fresh != null) {

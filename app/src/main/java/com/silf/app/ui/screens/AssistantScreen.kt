@@ -8,8 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,11 +25,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -64,57 +63,52 @@ fun AssistantScreen() {
         }
     }
 
-    // Contenedor raíz completamente transparente
+    // Contenedor raíz transparente
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Transparent)
     ) {
-        // Tocar fuera del panel inferior cierra el asistente flotante
+        // Tocar fuera del panel inferior cierra el asistente flotante sin bloquear accesibilidad
         Spacer(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    activity?.finish()
+                .pointerInput(Unit) {
+                    detectTapGestures { activity?.finish() }
                 }
         )
 
-        // Panel inferior flotante tipo BottomSheet
+        // Panel inferior flotante tipo BottomSheet compacto (solo ocupa el tercio inferior)
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
+                .wrapContentHeight()
                 .align(Alignment.BottomCenter)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    enabled = true
-                ) {},
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            color = SilfCardSurface.copy(alpha = 0.97f),
+                .padding(bottom = 16.dp, start = 8.dp, end = 8.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = SilfCardSurface.copy(alpha = 0.96f),
             shadowElevation = 16.dp,
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .wrapContentHeight()
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Indicador de arrastre (drag handle)
                 Box(
                     modifier = Modifier
-                        .width(44.dp)
+                        .width(36.dp)
                         .height(4.dp)
                         .clip(CircleShape)
                         .background(Color.Gray.copy(alpha = 0.4f))
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
-                // Encabezado del Asistente
+                // Encabezado compacto
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -122,16 +116,16 @@ fun AssistantScreen() {
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(10.dp)
+                                .size(8.dp)
                                 .clip(CircleShape)
                                 .background(if (container.llmEngine.isReady()) Color(0xFF00E676) else Color(0xFFFF9100))
                         )
                         Text(
-                            text = if (container.llmEngine.isReady()) "Silf Asistente (Local)" else "Silf (Sin modelo en RAM)",
+                            text = if (container.llmEngine.isReady()) "Silf Asistente" else "Silf (Sin modelo)",
                             style = MaterialTheme.typography.titleSmall,
                             color = Color.White,
                             fontWeight = FontWeight.Bold
@@ -139,46 +133,48 @@ fun AssistantScreen() {
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { chatViewModel.clearHistory() }) {
+                        IconButton(
+                            onClick = { chatViewModel.clearHistory() },
+                            modifier = Modifier.size(32.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
                                 contentDescription = "Limpiar historial",
-                                tint = Color.LightGray
+                                tint = Color.LightGray,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
-                        IconButton(onClick = { activity?.finish() }) {
+                        IconButton(
+                            onClick = { activity?.finish() },
+                            modifier = Modifier.size(32.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Cerrar Asistente",
-                                tint = Color.LightGray
+                                tint = Color.LightGray,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
                 }
 
-                // Avatar animado compacto
-                SilfAvatar(
-                    isGenerating = isGenerating,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(110.dp)
-                )
-
-                // Mensajes recientes de la conversación
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 200.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(vertical = 6.dp)
-                ) {
-                    items(messages) { message ->
-                        MessageBubble(message)
+                // Pequeño historial (máximo 90.dp) dejando visible el resto de la pantalla
+                if (messages.isNotEmpty()) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 90.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        items(messages) { message ->
+                            MessageBubble(message)
+                        }
                     }
                 }
 
-                // Indicador de Visión activa (accesibilidad conectada)
+                // Indicador de Visión activa (pantalla capturada)
                 AnimatedVisibility(
                     visible = isVisionActive,
                     enter = fadeIn() + expandVertically(),
@@ -187,7 +183,7 @@ fun AssistantScreen() {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
@@ -198,7 +194,7 @@ fun AssistantScreen() {
                                 .background(MaterialTheme.colorScheme.primary)
                         )
                         Text(
-                            text = "Visión activa · La IA lee y controla la pantalla",
+                            text = "Visión activa · Pantalla capturada",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -210,23 +206,23 @@ fun AssistantScreen() {
                         text = showErrorToast ?: "",
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(vertical = 4.dp)
+                        modifier = Modifier.padding(vertical = 2.dp)
                     )
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Barra de chat flotante inferior
+                // Barra de chat inferior
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 6.dp),
+                        .padding(bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
                         value = draftText,
                         onValueChange = chatViewModel::onDraftChanged,
-                        placeholder = { Text("Escribe una orden o pregunta...", color = Color.Gray) },
+                        placeholder = { Text("Escribe una orden...", color = Color.Gray) },
                         modifier = Modifier.weight(1f),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
