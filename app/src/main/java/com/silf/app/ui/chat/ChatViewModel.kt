@@ -110,13 +110,13 @@ class ChatViewModel(
             val screenSnapshot = screenSnapshotFlow.value.trim()
             val userMessage = prompt.trim()
 
-            // Formato ChatML Estricto para Qwen 2.5:
-            // Envuelve el prompt crudo exactamente como requiere el modelo sin formatos genéricos
-            val strictPrompt = "<|im_start|>system\nEres Silf. TIENES PERMISOS TOTALES para controlar este teléfono. Pantalla actual:\n$screenSnapshot\nTu única forma de responder es con el comando [CLICK: ID] correspondiente al botón que el usuario quiere tocar. No digas nada más.<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
+            // System Prompt Simplificado para el Agente:
+            // 'Eres un agente. Pantalla: {screenSnapshot}. Responde ÚNICA Y EXCLUSIVAMENTE con el [ID] del botón a tocar, entre corchetes. Ejemplo: [5]'
+            val strictPrompt = "<|im_start|>system\nEres un agente. Pantalla: $screenSnapshot. Responde ÚNICA Y EXCLUSIVAMENTE con el [ID] del botón a tocar, entre corchetes. Ejemplo: [5]<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
 
             val builder = StringBuilder()
             val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
-            val regex = Regex("(?i)\\[?CLICK:\\s*(\\d+)\\]?")
+            val digitRegex = Regex("\\d+")
             var clickExecuted = false
 
             try {
@@ -133,30 +133,28 @@ class ChatViewModel(
                         builder.append(cleanToken)
                         val currentText = builder.toString()
 
-                        // Intercepción en streaming con regex robusta
-                        val match = regex.find(currentText)
+                        // Extracción a prueba de balas: primer número que aparezca
+                        val match = digitRegex.find(currentText)
                         if (match != null) {
-                            val id = match.groupValues[1].toIntOrNull()
+                            val id = match.value.toIntOrNull()
                             if (id != null && !clickExecuted) {
                                 clickExecuted = true
-                                // Ocultar de la UI: eliminar inmediatamente el mensaje del asistente
+                                // Limpiar la respuesta y NO añadirla a la UI
                                 _messages.value = _messages.value.filterNot { it.id == responseId }
-                                // Ejecutar el clic inmediatamente
+                                // Enviar inmediatamente a performClickOnNode por coordenadas
                                 SilfAccessibilityService.instance?.performClickOnNode(id)
                                 stopGeneration()
                                 return@collect
                             }
                         }
 
-                        // Ocultar de la UI: no mostrar comandos CLICK en proceso al usuario
-                        val trimmedCurrent = currentText.trim()
-                        val isPotentialClick = trimmedCurrent.startsWith("CLICK", ignoreCase = true) ||
-                                              trimmedCurrent.startsWith("[CLICK", ignoreCase = true) ||
-                                              trimmedCurrent.startsWith("[", ignoreCase = true)
-
-                        if (!isPotentialClick && !clickExecuted) {
-                            _messages.value = _messages.value.map {
-                                if (it.id == responseId) it.copy(text = currentText.trim()) else it
+                        // Si no hay dígitos aún (por ej. si solo generó '[' o espacios), no mostrarlo en la UI
+                        if (!clickExecuted) {
+                            val clean = currentText.filterNot { it == '[' || it == ']' || it == ' ' || it == '\n' }
+                            if (clean.isNotEmpty()) {
+                                _messages.value = _messages.value.map {
+                                    if (it.id == responseId) it.copy(text = currentText.trim()) else it
+                                }
                             }
                         }
                     }
@@ -170,12 +168,11 @@ class ChatViewModel(
             }
 
             val fullGenerated = builder.toString().trim()
-            val match = regex.find(fullGenerated)
+            val match = digitRegex.find(fullGenerated)
 
             if (match != null) {
-                // Coincide con la Regex del comando CLICK
-                val id = match.groupValues[1].toIntOrNull()
-                // Ocultar de la UI: NO añadirlo / eliminarlo de la lista de mensajes de la UI
+                val id = match.value.toIntOrNull()
+                // Limpiar la respuesta y NO añadirla a la UI
                 _messages.value = _messages.value.filterNot { it.id == responseId }
 
                 // Ejecutar el clic inmediatamente si no se ejecutó durante el streaming
@@ -184,7 +181,7 @@ class ChatViewModel(
                     SilfAccessibilityService.instance?.performClickOnNode(id)
                 }
             } else {
-                // No es comando CLICK: respuesta conversacional normal
+                // Si NO se encontró ningún número, mantener respuesta conversacional normal
                 if (fullGenerated.isNotEmpty()) {
                     _messages.value = _messages.value.map {
                         if (it.id == responseId) it.copy(text = fullGenerated) else it

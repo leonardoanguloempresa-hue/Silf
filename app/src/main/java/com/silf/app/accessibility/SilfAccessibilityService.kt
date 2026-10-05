@@ -1,6 +1,9 @@
 package com.silf.app.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -10,11 +13,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Fase 9 y 11: Servicio de Accesibilidad para lectura de pantalla y ejecución de acciones (clics).
+ * Servicio de Accesibilidad para lectura de pantalla y ejecución física de acciones (clics por coordenadas).
  *
- * Recorre recursivamente rootInActiveWindow y genera un snapshot simplificado de la UI
- * inyectable como contexto al LLM. Además, almacena referencias a los nodos indexados
- * para permitir que el agente IA interactúe con la interfaz mediante [CLICK: X].
+ * Recorre recursivamente las ventanas activas ignorando la propia aplicación (Silf)
+ * y genera un snapshot simplificado de la UI inyectable como contexto al LLM.
+ * Para ejecutar clics, obtiene las coordenadas reales en pantalla del nodo
+ * y despacha un tap físico exacto con GestureDescription (API 24+), evitando
+ * las fallas del performAction tradicional en MIUI y launchers personalizados.
  */
 class SilfAccessibilityService : AccessibilityService() {
 
@@ -71,12 +76,42 @@ class SilfAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Localiza la raíz de la ventana activa visible que no pertenezca a Silf
+     * (útil cuando AssistantActivity se muestra como overlay flotante sobre otra app).
+     */
+    private fun findTargetWindowRoot(): AccessibilityNodeInfo? {
+        try {
+            val windowList = windows
+            for (w in windowList) {
+                val winRoot = w.root ?: continue
+                if (winRoot.packageName != packageName) {
+                    return winRoot
+                } else {
+                    recycleCompat(winRoot)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error buscando ventana no-Silf: ${e.message}")
+        }
+        return null
+    }
+
+    /**
      * Lee la ventana activa y devuelve su representación simplificada,
      * almacenando en savedNodes los nodos correspondientes a cada índice.
+     * FILTRA e IGNORA la propia interfaz de Silf para evitar confusiones al LLM.
      */
     fun captureScreen(): String? {
-        val root = rootInActiveWindow ?: return null
-        if (root.packageName == packageName) return null
+        var root = rootInActiveWindow
+        if (root == null || root.packageName == packageName) {
+            recycleCompat(root)
+            root = findTargetWindowRoot()
+        }
+
+        if (root == null || root.packageName == packageName) {
+            recycleCompat(root)
+            return null
+        }
 
         clearSavedNodes()
 
@@ -92,8 +127,8 @@ class SilfAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Recorrido recursivo en profundidad. Guarda nodos interactivos o informativos
-     * asociándolos al índice actual.
+     * Recorrido recursivo en profundidad.
+     * IGNORA/FILTRA todos los nodos cuyo packageName sea el de la propia aplicación (Silf).
      */
     private fun traverse(
         node: AccessibilityNodeInfo,
@@ -102,6 +137,8 @@ class SilfAccessibilityService : AccessibilityService() {
         counter: IntArray
     ) {
         if (depth > MAX_DEPTH || counter[0] >= MAX_NODES) return
+        // Ignorar la propia UI de Silf
+        if (node.packageName == packageName) return
         if (!node.isVisibleToUser) return
 
         val text = node.text?.toString()?.trim().orEmpty()
@@ -127,7 +164,7 @@ class SilfAccessibilityService : AccessibilityService() {
             if (flags.isNotEmpty()) out.append(" (").append(flags.joinToString(",")).append(')')
             out.append('\n')
 
-            // Guardar copia del nodo para permitir clics futuros por índice
+            // Guardar copia del nodo para permitir clics futuros por coordenadas
             try {
                 savedNodes[idx] = AccessibilityNodeInfo.obtain(node)
             } catch (e: Exception) {
@@ -148,66 +185,117 @@ class SilfAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Fase 11: Realiza un clic sobre el nodo especificado por su índice en la pantalla.
-     * Busca primero en la lista guardada de nodos (savedNodes). Cuando encuentra el nodo,
-     * ejecuta node.performAction(AccessibilityNodeInfo.ACTION_CLICK).
-     * Si ese nodo específico no tiene isClickable == true, intenta ejecutar el clic
-     * en su parent de forma recursiva hasta encontrar un contenedor clickeable.
+     * Despacha un toque físico (tap) en las coordenadas exactas de la pantalla
+     * usando la API GestureDescription (API 24+).
+     * Esto funciona de forma garantizada en MIUI, ColorOS y lanzadores personalizados
+     * donde node.performAction(ACTION_CLICK) suele fallar o ser bloqueado.
+     */
+    fun clickAt(x: Float, y: Float): Boolean {
+        Log.i(TAG, "Despachando tap por GestureDescription en coordenadas: ($x, $y)")
+        val path = Path().apply {
+            moveTo(x, y)
+        }
+        val stroke = GestureDescription.StrokeDescription(path, 0L, 50L)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                Log.i(TAG, "Gesto de clic en ($x, $y) completado exitosamente")
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                Log.w(TAG, "Gesto de clic en ($x, $y) cancelado por el sistema")
+            }
+        }, null)
+        Log.i(TAG, "dispatchGesture retornado: $dispatched")
+        return dispatched
+    }
+
+    /**
+     * Realiza un clic sobre el nodo especificado por su índice en la pantalla.
+     * En lugar de performAction(), obtiene las coordenadas físicas del nodo:
+     * val rect = Rect()
+     * node.getBoundsInScreen(rect)
+     * y usa GestureDescription para despachar un tap físico exacto en el centro
+     * (rect.exactCenterX(), rect.exactCenterY()).
      */
     fun performClickOnNode(index: Int): Boolean {
-        Log.i(TAG, "Solicitado clic en nodo con índice: $index")
+        Log.i(TAG, "Solicitado clic por coordenadas en nodo con índice: $index")
 
         // 1. Buscar en la lista guardada de nodos
         val savedNode = savedNodes[index]
         if (savedNode != null) {
             try {
-                if (clickNodeOrParent(savedNode)) {
-                    Log.i(TAG, "Clic exitoso en nodo guardado [$index]")
-                    return true
+                val rect = Rect()
+                savedNode.getBoundsInScreen(rect)
+                if (!rect.isEmpty && rect.width() > 0 && rect.height() > 0) {
+                    val centerX = rect.exactCenterX()
+                    val centerY = rect.exactCenterY()
+                    Log.i(TAG, "Coordenadas obtenidas de savedNodes[$index]: bounds=$rect centro=($centerX, $centerY)")
+                    val dispatched = clickAt(centerX, centerY)
+                    if (dispatched) return true
+                } else {
+                    Log.w(TAG, "Nodo guardado [$index] tiene bounds vacíos: $rect")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Fallo al interactuar con nodo guardado [$index]: ${e.message}")
+                Log.w(TAG, "Fallo al obtener coordenadas de nodo guardado [$index]: ${e.message}")
             }
         }
 
-        // 2. Si no estaba en cache o falló, buscar de forma fresca en el árbol activo
-        val root = rootInActiveWindow
+        // 2. Si no estaba en cache o bounds vacíos, buscar de forma fresca en el árbol activo
+        var root = rootInActiveWindow
+        if (root == null || root.packageName == packageName) {
+            recycleCompat(root)
+            root = findTargetWindowRoot()
+        }
+
         if (root != null) {
             try {
                 val freshTarget = findNodeByIndex(root, index)
                 if (freshTarget != null) {
                     try {
-                        val success = clickNodeOrParent(freshTarget)
-                        Log.i(TAG, "Clic en nodo fresco [$index]: $success")
-                        return success
+                        val rect = Rect()
+                        freshTarget.getBoundsInScreen(rect)
+                        if (!rect.isEmpty && rect.width() > 0 && rect.height() > 0) {
+                            val centerX = rect.exactCenterX()
+                            val centerY = rect.exactCenterY()
+                            Log.i(TAG, "Coordenadas de nodo fresco [$index]: bounds=$rect centro=($centerX, $centerY)")
+                            return clickAt(centerX, centerY)
+                        }
                     } finally {
                         recycleCompat(freshTarget)
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Fallo buscando nodo fresco [$index]: ${e.message}")
+                Log.w(TAG, "Fallo al buscar coordenadas en árbol activo [$index]: ${e.message}")
             } finally {
                 recycleCompat(root)
             }
         }
 
-        Log.e(TAG, "No se encontró ningún nodo válido para el índice [$index]")
+        Log.e(TAG, "No se encontraron coordenadas válidas para el índice [$index]")
         return false
     }
 
     /**
-     * Fase 11: Realiza un clic buscando el primer nodo con el texto especificado.
+     * Realiza un clic buscando el primer nodo con el texto especificado por coordenadas.
      */
     fun performClickOnNode(nodeText: String): Boolean {
         Log.i(TAG, "Solicitado clic en nodo con texto: \"$nodeText\"")
-        val root = rootInActiveWindow ?: return false
+        var root = rootInActiveWindow
+        if (root == null || root.packageName == packageName) {
+            recycleCompat(root)
+            root = findTargetWindowRoot()
+        }
+        if (root == null) return false
         try {
             val matchingNodes = root.findAccessibilityNodeInfosByText(nodeText)
             for (node in matchingNodes) {
                 try {
-                    if (clickNodeOrParent(node)) {
-                        Log.i(TAG, "Clic exitoso en nodo con texto \"$nodeText\"")
-                        return true
+                    if (node.packageName == packageName) continue
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+                    if (!rect.isEmpty && rect.width() > 0 && rect.height() > 0) {
+                        return clickAt(rect.exactCenterX(), rect.exactCenterY())
                     }
                 } finally {
                     recycleCompat(node)
@@ -218,41 +306,6 @@ class SilfAccessibilityService : AccessibilityService() {
         }
         Log.e(TAG, "No se encontró ningún nodo clickable con texto \"$nodeText\"")
         return false
-    }
-
-    /**
-     * Ejecuta ACTION_CLICK en el nodo.
-     * Si ese nodo específico no tiene isClickable == true, busca recursivamente
-     * en su jerarquía de ancestros (parent) hasta encontrar un contenedor clickeable
-     * y ejecuta el clic en él.
-     */
-    private fun clickNodeOrParent(node: AccessibilityNodeInfo): Boolean {
-        // 1. Si el nodo específico tiene isClickable == true, intentar el clic directo
-        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            return true
-        }
-
-        // 2. Si no es clickeable o falló, buscar recursivamente en sus padres (parent)
-        // hasta encontrar un contenedor clickeable
-        var current: AccessibilityNodeInfo? = node.parent
-        while (current != null) {
-            try {
-                if (current.isClickable && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                    Log.i(TAG, "Clic exitoso en parent clickeable: ${current.className}")
-                    recycleCompat(current)
-                    return true
-                }
-                val next = current.parent
-                recycleCompat(current)
-                current = next
-            } catch (e: Exception) {
-                Log.w(TAG, "Error recorriendo jerarquía de padres: ${e.message}")
-                break
-            }
-        }
-
-        // 3. Como fallback de último recurso, intentar ACTION_CLICK directo en el nodo original
-        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
     private fun findNodeByIndex(root: AccessibilityNodeInfo, targetIndex: Int): AccessibilityNodeInfo? {
@@ -267,6 +320,7 @@ class SilfAccessibilityService : AccessibilityService() {
         targetIndex: Int
     ): AccessibilityNodeInfo? {
         if (depth > MAX_DEPTH || counter[0] > targetIndex) return null
+        if (node.packageName == packageName) return null
         if (!node.isVisibleToUser) return null
 
         val text = node.text?.toString()?.trim().orEmpty()
@@ -294,7 +348,8 @@ class SilfAccessibilityService : AccessibilityService() {
     }
 
     @Suppress("DEPRECATION")
-    private fun recycleCompat(node: AccessibilityNodeInfo) {
+    private fun recycleCompat(node: AccessibilityNodeInfo?) {
+        if (node == null) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             try { node.recycle() } catch (_: IllegalStateException) { }
         }
