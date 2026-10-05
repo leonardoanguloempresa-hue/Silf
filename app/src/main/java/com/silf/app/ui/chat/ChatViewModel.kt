@@ -114,11 +114,14 @@ class ChatViewModel(
             // Guardar mensaje del usuario en Room
             chatRepository.insertMessage(text = prompt, isUser = true)
 
-            val screenSnapshot = screenSnapshotFlow.value.trim()
+            // Refrescar activamente el snapshot de la pantalla desde SilfAccessibilityService (sin valor en caché)
+            val screenSnapshot = withContext(Dispatchers.Main) {
+                SilfAccessibilityService.getFreshScreenSnapshot()
+            }.trim()
             val userMessage = prompt.trim()
 
             // System Prompt Simplificado para el Agente:
-            // 'Eres un agente. Pantalla: {screenSnapshot}. Responde ÚNICA Y EXCLUSIVAMENTE con el [ID] del botón a tocar, entre corchetes. Ejemplo: [5]'
+            // El LLM recibe ÚNICAMENTE el último par (System Prompt con Snapshot actual + User Message), sin historial pasado
             val strictPrompt = if (screenSnapshot.isNotEmpty()) {
                 "<|im_start|>system\nEres un agente. Pantalla: $screenSnapshot. Responde ÚNICA Y EXCLUSIVAMENTE con el [ID] del botón a tocar, entre corchetes. Ejemplo: [5]<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
             } else {
@@ -149,12 +152,18 @@ class ChatViewModel(
                             val id = match.groupValues[1].toIntOrNull()
                             if (id != null) {
                                 clickExecuted = true
-                                // Feedback visual: Toast en el hilo principal
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "Silf: Clic en [$id]", Toast.LENGTH_SHORT).show()
+                                // Ejecutar clic por coordenadas en el Hilo Principal y obtener el Rect real
+                                val rect = withContext(Dispatchers.Main) {
+                                    SilfAccessibilityService.instance?.performClickOnNode(id)
                                 }
-                                // Enviar inmediatamente a performClickOnNode por coordenadas
-                                SilfAccessibilityService.instance?.performClickOnNode(id)
+                                // Feedback visual: Toast con coordenadas exactas en el Hilo Principal
+                                withContext(Dispatchers.Main) {
+                                    if (rect != null) {
+                                        Toast.makeText(context, "Silf: Clic en [$id] -> X:${rect.centerX()}, Y:${rect.centerY()}", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "Silf: Clic en [$id] -> Nodo no encontrado", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
 
                                 // Limpiar la respuesta y NO añadirla a la UI si fue un comando ejecutado
                                 _messages.value = _messages.value.filterNot { it.id == responseId }
@@ -184,10 +193,16 @@ class ChatViewModel(
                         val id = match.groupValues[1].toIntOrNull()
                         if (id != null) {
                             clickExecuted = true
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "Silf: Clic en [$id]", Toast.LENGTH_SHORT).show()
+                            val rect = withContext(Dispatchers.Main) {
+                                SilfAccessibilityService.instance?.performClickOnNode(id)
                             }
-                            SilfAccessibilityService.instance?.performClickOnNode(id)
+                            withContext(Dispatchers.Main) {
+                                if (rect != null) {
+                                    Toast.makeText(context, "Silf: Clic en [$id] -> X:${rect.centerX()}, Y:${rect.centerY()}", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Silf: Clic en [$id] -> Nodo no encontrado", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                             _messages.value = _messages.value.filterNot { it.id == responseId }
                         }
                     } else {

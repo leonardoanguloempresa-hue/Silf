@@ -5,6 +5,8 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -193,7 +195,8 @@ class SilfAccessibilityService : AccessibilityService() {
     /**
      * Despacha un toque físico (tap) en las coordenadas exactas de la pantalla
      * usando la API GestureDescription (API 24+).
-     * Envuelta en un try-catch protector para evitar cierres inesperados.
+     * Envuelta en un try-catch protector y garantizada para ejecutarse en el Hilo Principal
+     * (Handler(Looper.getMainLooper()).post) ya que MIUI / Android descarta gestos de hilos secundarios.
      */
     fun clickAt(x: Float, y: Float): Boolean {
         Log.i(TAG, "Despachando tap por GestureDescription en coordenadas: ($x, $y)")
@@ -203,17 +206,39 @@ class SilfAccessibilityService : AccessibilityService() {
             }
             val stroke = GestureDescription.StrokeDescription(path, 0L, 50L)
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
-            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
-                override fun onCompleted(gestureDescription: GestureDescription?) {
-                    Log.i(TAG, "Gesto de clic en ($x, $y) completado exitosamente")
-                }
 
-                override fun onCancelled(gestureDescription: GestureDescription?) {
-                    Log.w(TAG, "Gesto de clic en ($x, $y) cancelado por el sistema")
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        Log.i(TAG, "Gesto de clic en ($x, $y) completado exitosamente")
+                    }
+
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        Log.w(TAG, "Gesto de clic en ($x, $y) cancelado por el sistema")
+                    }
+                }, null)
+                Log.i(TAG, "dispatchGesture retornado en Main thread: $dispatched")
+                dispatched
+            } else {
+                var dispatched = false
+                Handler(Looper.getMainLooper()).post {
+                    try {
+                        dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+                            override fun onCompleted(gestureDescription: GestureDescription?) {
+                                Log.i(TAG, "Gesto de clic en ($x, $y) completado exitosamente")
+                            }
+
+                            override fun onCancelled(gestureDescription: GestureDescription?) {
+                                Log.w(TAG, "Gesto de clic en ($x, $y) cancelado por el sistema")
+                            }
+                        }, null)
+                        Log.i(TAG, "dispatchGesture retornado vía Handler(Looper.getMainLooper()): $dispatched")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error en dispatchGesture desde Handler: ${e.message}", e)
+                    }
                 }
-            }, null)
-            Log.i(TAG, "dispatchGesture retornado: $dispatched")
-            dispatched
+                true
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error despachando gesto en ($x, $y): ${e.message}", e)
             false
@@ -221,28 +246,49 @@ class SilfAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Realiza un clic sobre el nodo especificado por su índice en la pantalla.
-     * En lugar de performAction(), obtiene las coordenadas físicas del nodo:
-     * val rect = Rect()
-     * node.getBoundsInScreen(rect)
-     * y usa GestureDescription para despachar un tap físico exacto en el centro
-     * (rect.exactCenterX(), rect.exactCenterY()) tras verificar rect.width() > 0 && rect.height() > 0.
+     * Si el nodo no tiene isClickable == true, busca recursivamente hacia arriba:
+     * var current = node; while(current != null && !current.isClickable) { current = current.parent }
+     * Si encuentra un parent clickeable, usa ese.
      */
-    fun performClickOnNode(index: Int): Boolean {
+    private fun findClickableTarget(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
+        if (node.isClickable) return node
+        var current: AccessibilityNodeInfo? = node.parent
+        while (current != null && !current.isClickable) {
+            val next = current.parent
+            recycleCompat(current)
+            current = next
+        }
+        if (current != null && current.isClickable) {
+            Log.i(TAG, "Nodo original no clickeable. Encontrado parent clickeable: ${current.className}")
+            return current
+        }
+        return node
+    }
+
+    /**
+     * Realiza un clic sobre el nodo especificado por su índice en la pantalla.
+     * Si el nodo no es clickeable, busca recursivamente un parent clickeable.
+     * Retorna el Rect con las coordenadas reales del clic, o null si falla.
+     */
+    fun performClickOnNode(index: Int): Rect? {
         Log.i(TAG, "Solicitado clic por coordenadas en nodo con índice: $index")
 
         // 1. Buscar en la lista guardada de nodos
         val savedNode = savedNodes[index]
         if (savedNode != null) {
             try {
+                val target = findClickableTarget(savedNode)
                 val rect = Rect()
-                savedNode.getBoundsInScreen(rect)
+                target.getBoundsInScreen(rect)
+                if (target !== savedNode) {
+                    recycleCompat(target)
+                }
                 if (rect.width() > 0 && rect.height() > 0) {
                     val centerX = rect.exactCenterX()
                     val centerY = rect.exactCenterY()
                     Log.i(TAG, "Coordenadas obtenidas de savedNodes[$index]: bounds=$rect centro=($centerX, $centerY)")
                     val dispatched = clickAt(centerX, centerY)
-                    if (dispatched) return true
+                    if (dispatched) return rect
                 } else {
                     Log.w(TAG, "Nodo guardado [$index] tiene dimensiones inválidas: width=${rect.width()}, height=${rect.height()}")
                 }
@@ -263,13 +309,18 @@ class SilfAccessibilityService : AccessibilityService() {
                 val freshTarget = findNodeByIndex(root, index)
                 if (freshTarget != null) {
                     try {
+                        val target = findClickableTarget(freshTarget)
                         val rect = Rect()
-                        freshTarget.getBoundsInScreen(rect)
+                        target.getBoundsInScreen(rect)
+                        if (target !== freshTarget) {
+                            recycleCompat(target)
+                        }
                         if (rect.width() > 0 && rect.height() > 0) {
                             val centerX = rect.exactCenterX()
                             val centerY = rect.exactCenterY()
                             Log.i(TAG, "Coordenadas de nodo fresco [$index]: bounds=$rect centro=($centerX, $centerY)")
-                            return clickAt(centerX, centerY)
+                            val dispatched = clickAt(centerX, centerY)
+                            if (dispatched) return rect
                         } else {
                             Log.w(TAG, "Nodo fresco [$index] tiene dimensiones inválidas: width=${rect.width()}, height=${rect.height()}")
                         }
@@ -285,29 +336,34 @@ class SilfAccessibilityService : AccessibilityService() {
         }
 
         Log.e(TAG, "No se encontraron coordenadas válidas para el índice [$index]")
-        return false
+        return null
     }
 
     /**
      * Realiza un clic buscando el primer nodo con el texto especificado por coordenadas.
      */
-    fun performClickOnNode(nodeText: String): Boolean {
+    fun performClickOnNode(nodeText: String): Rect? {
         Log.i(TAG, "Solicitado clic en nodo con texto: \"$nodeText\"")
         var root = rootInActiveWindow
         if (root == null || root.packageName == packageName) {
             recycleCompat(root)
             root = findTargetWindowRoot()
         }
-        if (root == null) return false
+        if (root == null) return null
         try {
             val matchingNodes = root.findAccessibilityNodeInfosByText(nodeText)
             for (node in matchingNodes) {
                 try {
                     if (node.packageName == packageName) continue
+                    val target = findClickableTarget(node)
                     val rect = Rect()
-                    node.getBoundsInScreen(rect)
+                    target.getBoundsInScreen(rect)
+                    if (target !== node) {
+                        recycleCompat(target)
+                    }
                     if (rect.width() > 0 && rect.height() > 0) {
-                        return clickAt(rect.exactCenterX(), rect.exactCenterY())
+                        val dispatched = clickAt(rect.exactCenterX(), rect.exactCenterY())
+                        if (dispatched) return rect
                     }
                 } finally {
                     recycleCompat(node)
@@ -317,7 +373,7 @@ class SilfAccessibilityService : AccessibilityService() {
             recycleCompat(root)
         }
         Log.e(TAG, "No se encontró ningún nodo clickable con texto \"$nodeText\"")
-        return false
+        return null
     }
 
     private fun findNodeByIndex(root: AccessibilityNodeInfo, targetIndex: Int): AccessibilityNodeInfo? {
@@ -386,14 +442,33 @@ class SilfAccessibilityService : AccessibilityService() {
          * Permite ejecutar un clic por índice desde cualquier ViewModel o componente.
          */
         fun performClick(nodeIndex: Int): Boolean {
-            return instance?.performClickOnNode(nodeIndex) ?: false
+            return instance?.performClickOnNode(nodeIndex) != null
         }
 
         /**
          * Permite ejecutar un clic por texto desde cualquier ViewModel o componente.
          */
         fun performClick(nodeText: String): Boolean {
-            return instance?.performClickOnNode(nodeText) ?: false
+            return instance?.performClickOnNode(nodeText) != null
+        }
+
+        /**
+         * Obtiene el snapshot fresco y en tiempo real de la pantalla activa sin usar valores en caché.
+         */
+        fun getFreshScreenSnapshot(): String {
+            val inst = instance ?: return _screenSnapshot.value
+            return try {
+                val fresh = inst.captureScreen()
+                if (fresh != null) {
+                    _screenSnapshot.value = fresh
+                    fresh
+                } else {
+                    _screenSnapshot.value
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error refrescando snapshot en tiempo real: ${e.message}")
+                _screenSnapshot.value
+            }
         }
     }
 }

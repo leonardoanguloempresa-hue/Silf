@@ -190,6 +190,9 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
                 throw std::runtime_error("Prompt exceeds context size");
             }
 
+            // Limpiar KV cache para que la nueva generación no arrastre tokens de la respuesta anterior
+            llama_kv_cache_clear(infCtx->ctx);
+
             // Inicializar el batch (suficiente para prompt y especulaciones MTP)
             llama_batch batch = llama_batch_init(std::max(512, n_tokens + 16), 0, 1);
             struct BatchGuard {
