@@ -190,24 +190,34 @@ class SilfAccessibilityService : AccessibilityService() {
      * Esto funciona de forma garantizada en MIUI, ColorOS y lanzadores personalizados
      * donde node.performAction(ACTION_CLICK) suele fallar o ser bloqueado.
      */
+    /**
+     * Despacha un toque físico (tap) en las coordenadas exactas de la pantalla
+     * usando la API GestureDescription (API 24+).
+     * Envuelta en un try-catch protector para evitar cierres inesperados.
+     */
     fun clickAt(x: Float, y: Float): Boolean {
         Log.i(TAG, "Despachando tap por GestureDescription en coordenadas: ($x, $y)")
-        val path = Path().apply {
-            moveTo(x, y)
-        }
-        val stroke = GestureDescription.StrokeDescription(path, 0L, 50L)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
-            override fun onCompleted(gestureDescription: GestureDescription?) {
-                Log.i(TAG, "Gesto de clic en ($x, $y) completado exitosamente")
+        return try {
+            val path = Path().apply {
+                moveTo(x, y)
             }
+            val stroke = GestureDescription.StrokeDescription(path, 0L, 50L)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    Log.i(TAG, "Gesto de clic en ($x, $y) completado exitosamente")
+                }
 
-            override fun onCancelled(gestureDescription: GestureDescription?) {
-                Log.w(TAG, "Gesto de clic en ($x, $y) cancelado por el sistema")
-            }
-        }, null)
-        Log.i(TAG, "dispatchGesture retornado: $dispatched")
-        return dispatched
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    Log.w(TAG, "Gesto de clic en ($x, $y) cancelado por el sistema")
+                }
+            }, null)
+            Log.i(TAG, "dispatchGesture retornado: $dispatched")
+            dispatched
+        } catch (e: Exception) {
+            Log.e(TAG, "Error despachando gesto en ($x, $y): ${e.message}", e)
+            false
+        }
     }
 
     /**
@@ -216,7 +226,7 @@ class SilfAccessibilityService : AccessibilityService() {
      * val rect = Rect()
      * node.getBoundsInScreen(rect)
      * y usa GestureDescription para despachar un tap físico exacto en el centro
-     * (rect.exactCenterX(), rect.exactCenterY()).
+     * (rect.exactCenterX(), rect.exactCenterY()) tras verificar rect.width() > 0 && rect.height() > 0.
      */
     fun performClickOnNode(index: Int): Boolean {
         Log.i(TAG, "Solicitado clic por coordenadas en nodo con índice: $index")
@@ -227,14 +237,14 @@ class SilfAccessibilityService : AccessibilityService() {
             try {
                 val rect = Rect()
                 savedNode.getBoundsInScreen(rect)
-                if (!rect.isEmpty && rect.width() > 0 && rect.height() > 0) {
+                if (rect.width() > 0 && rect.height() > 0) {
                     val centerX = rect.exactCenterX()
                     val centerY = rect.exactCenterY()
                     Log.i(TAG, "Coordenadas obtenidas de savedNodes[$index]: bounds=$rect centro=($centerX, $centerY)")
                     val dispatched = clickAt(centerX, centerY)
                     if (dispatched) return true
                 } else {
-                    Log.w(TAG, "Nodo guardado [$index] tiene bounds vacíos: $rect")
+                    Log.w(TAG, "Nodo guardado [$index] tiene dimensiones inválidas: width=${rect.width()}, height=${rect.height()}")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Fallo al obtener coordenadas de nodo guardado [$index]: ${e.message}")
@@ -255,11 +265,13 @@ class SilfAccessibilityService : AccessibilityService() {
                     try {
                         val rect = Rect()
                         freshTarget.getBoundsInScreen(rect)
-                        if (!rect.isEmpty && rect.width() > 0 && rect.height() > 0) {
+                        if (rect.width() > 0 && rect.height() > 0) {
                             val centerX = rect.exactCenterX()
                             val centerY = rect.exactCenterY()
                             Log.i(TAG, "Coordenadas de nodo fresco [$index]: bounds=$rect centro=($centerX, $centerY)")
                             return clickAt(centerX, centerY)
+                        } else {
+                            Log.w(TAG, "Nodo fresco [$index] tiene dimensiones inválidas: width=${rect.width()}, height=${rect.height()}")
                         }
                     } finally {
                         recycleCompat(freshTarget)
@@ -294,7 +306,7 @@ class SilfAccessibilityService : AccessibilityService() {
                     if (node.packageName == packageName) continue
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
-                    if (!rect.isEmpty && rect.width() > 0 && rect.height() > 0) {
+                    if (rect.width() > 0 && rect.height() > 0) {
                         return clickAt(rect.exactCenterX(), rect.exactCenterY())
                     }
                 } finally {

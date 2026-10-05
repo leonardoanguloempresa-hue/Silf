@@ -1,12 +1,17 @@
 package com.silf.app.ui.chat
 
+import android.content.Context
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.silf.app.SilfApplication
 import com.silf.app.accessibility.SilfAccessibilityService
 import com.silf.app.data.preferences.PreferencesManager
 import com.silf.app.data.repository.ChatRepository
+import com.silf.app.domain.llm.LlamaCppEngine
 import com.silf.app.domain.llm.LlmEngine
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -15,13 +20,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class ChatViewModel(
-    private val llmEngine: LlmEngine,
+    private val llmEngine: LlmEngine = LlamaCppEngine.getInstance(),
     private val chatRepository: ChatRepository,
     private val screenSnapshotFlow: StateFlow<String> = SilfAccessibilityService.screenSnapshot,
-    private val preferencesManager: PreferencesManager? = null
+    private val preferencesManager: PreferencesManager? = null,
+    private val context: Context = SilfApplication.instance
 ) : ViewModel() {
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
@@ -112,17 +119,20 @@ class ChatViewModel(
 
             // System Prompt Simplificado para el Agente:
             // 'Eres un agente. Pantalla: {screenSnapshot}. Responde ÚNICA Y EXCLUSIVAMENTE con el [ID] del botón a tocar, entre corchetes. Ejemplo: [5]'
-            val strictPrompt = "<|im_start|>system\nEres un agente. Pantalla: $screenSnapshot. Responde ÚNICA Y EXCLUSIVAMENTE con el [ID] del botón a tocar, entre corchetes. Ejemplo: [5]<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
+            val strictPrompt = if (screenSnapshot.isNotEmpty()) {
+                "<|im_start|>system\nEres un agente. Pantalla: $screenSnapshot. Responde ÚNICA Y EXCLUSIVAMENTE con el [ID] del botón a tocar, entre corchetes. Ejemplo: [5]<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
+            } else {
+                "<|im_start|>system\nEres Silf, un asistente útil y preciso.<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
+            }
 
             val builder = StringBuilder()
             val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
-            val digitRegex = Regex("\\d+")
+            val commandRegex = Regex("\\[(\\d+)\\]")
             var clickExecuted = false
 
             try {
                 llmEngine.generateResponseStream(strictPrompt).collect { token ->
                     if (stopTokens.any { token.contains(it) }) {
-                        stopGeneration()
                         return@collect
                     }
                     var cleanToken = token
@@ -133,63 +143,78 @@ class ChatViewModel(
                         builder.append(cleanToken)
                         val currentText = builder.toString()
 
-                        // Extracción a prueba de balas: primer número que aparezca
-                        val match = digitRegex.find(currentText)
-                        if (match != null) {
-                            val id = match.value.toIntOrNull()
-                            if (id != null && !clickExecuted) {
+                        // Buscar estrictamente comando [ID] entre corchetes
+                        val match = commandRegex.find(currentText)
+                        if (match != null && !clickExecuted) {
+                            val id = match.groupValues[1].toIntOrNull()
+                            if (id != null) {
                                 clickExecuted = true
-                                // Limpiar la respuesta y NO añadirla a la UI
-                                _messages.value = _messages.value.filterNot { it.id == responseId }
+                                // Feedback visual: Toast en el hilo principal
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "Silf: Clic en [$id]", Toast.LENGTH_SHORT).show()
+                                }
                                 // Enviar inmediatamente a performClickOnNode por coordenadas
                                 SilfAccessibilityService.instance?.performClickOnNode(id)
-                                stopGeneration()
+
+                                // Limpiar la respuesta y NO añadirla a la UI si fue un comando ejecutado
+                                _messages.value = _messages.value.filterNot { it.id == responseId }
+
+                                // Detener la generación del LLM
+                                llmEngine.stopGeneration()
                                 return@collect
                             }
                         }
 
-                        // Si no hay dígitos aún (por ej. si solo generó '[' o espacios), no mostrarlo en la UI
+                        // Visibilidad de fallos / Streaming: Si aún no se ejecutó clic,
+                        // DEBEMOS mostrar el texto en la UI del chat para que el usuario vea si la IA alucina o explica
                         if (!clickExecuted) {
-                            val clean = currentText.filterNot { it == '[' || it == ']' || it == ' ' || it == '\n' }
-                            if (clean.isNotEmpty()) {
-                                _messages.value = _messages.value.map {
-                                    if (it.id == responseId) it.copy(text = currentText.trim()) else it
-                                }
+                            _messages.value = _messages.value.map {
+                                if (it.id == responseId) it.copy(text = currentText) else it
                             }
                         }
                     }
                 }
+
+                // Post-procesamiento al finalizar la generación dentro del bloque try
+                if (!clickExecuted) {
+                    val fullGenerated = builder.toString().trim()
+                    val match = commandRegex.find(fullGenerated)
+
+                    if (match != null) {
+                        val id = match.groupValues[1].toIntOrNull()
+                        if (id != null) {
+                            clickExecuted = true
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "Silf: Clic en [$id]", Toast.LENGTH_SHORT).show()
+                            }
+                            SilfAccessibilityService.instance?.performClickOnNode(id)
+                            _messages.value = _messages.value.filterNot { it.id == responseId }
+                        }
+                    } else {
+                        // Si el texto generado NO hace match con la Regex, DEBES mostrar el texto en la UI del chat. No lo ocultes.
+                        if (fullGenerated.isNotEmpty()) {
+                            _messages.value = _messages.value.map {
+                                if (it.id == responseId) it.copy(text = fullGenerated) else it
+                            }
+                            chatRepository.insertMessage(text = fullGenerated, isUser = false)
+                        } else {
+                            val emptyMsg = "[La IA no generó ninguna respuesta]"
+                            _messages.value = _messages.value.map {
+                                if (it.id == responseId) it.copy(text = emptyMsg) else it
+                            }
+                            chatRepository.insertMessage(text = emptyMsg, isUser = false)
+                        }
+                    }
+                }
             } catch (c: CancellationException) {
-                // Cancelación esperada al detener generación
+                // Cancelación esperada al detener generación manualmente
             } catch (t: Throwable) {
                 _showErrorToast.value = "Error: ${t.message}"
+                _messages.value = _messages.value.map {
+                    if (it.id == responseId) it.copy(text = "[Error: ${t.message}]") else it
+                }
             } finally {
                 _isGenerating.value = false
-            }
-
-            val fullGenerated = builder.toString().trim()
-            val match = digitRegex.find(fullGenerated)
-
-            if (match != null) {
-                val id = match.value.toIntOrNull()
-                // Limpiar la respuesta y NO añadirla a la UI
-                _messages.value = _messages.value.filterNot { it.id == responseId }
-
-                // Ejecutar el clic inmediatamente si no se ejecutó durante el streaming
-                if (!clickExecuted && id != null) {
-                    clickExecuted = true
-                    SilfAccessibilityService.instance?.performClickOnNode(id)
-                }
-            } else {
-                // Si NO se encontró ningún número, mantener respuesta conversacional normal
-                if (fullGenerated.isNotEmpty()) {
-                    _messages.value = _messages.value.map {
-                        if (it.id == responseId) it.copy(text = fullGenerated) else it
-                    }
-                    chatRepository.insertMessage(text = fullGenerated, isUser = false)
-                } else {
-                    _messages.value = _messages.value.filterNot { it.id == responseId }
-                }
             }
         }
     }

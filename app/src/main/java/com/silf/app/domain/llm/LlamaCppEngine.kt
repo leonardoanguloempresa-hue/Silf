@@ -6,11 +6,13 @@ import com.silf.app.llm.LlamaNative
 import com.silf.app.llm.TokenCallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -178,7 +180,7 @@ class LlamaCppEngine private constructor() : LlmEngine {
         })
 
         awaitClose { native.cancel(modelHandle) }
-    }
+    }.buffer(Channel.UNLIMITED)
 
     fun updateSystemContext(context: String) { systemContext = context }
 
