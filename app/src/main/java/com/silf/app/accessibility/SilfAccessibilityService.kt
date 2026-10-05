@@ -149,45 +149,49 @@ class SilfAccessibilityService : AccessibilityService() {
 
     /**
      * Fase 11: Realiza un clic sobre el nodo especificado por su índice en la pantalla.
-     * Busca primero en los nodos guardados en el último snapshot, y si no es válido
-     * o no se encuentra, busca en el árbol activo actual.
+     * Busca primero en la lista guardada de nodos (savedNodes). Cuando encuentra el nodo,
+     * ejecuta node.performAction(AccessibilityNodeInfo.ACTION_CLICK).
+     * Si ese nodo específico no tiene isClickable == true, intenta ejecutar el clic
+     * en su parent de forma recursiva hasta encontrar un contenedor clickeable.
      */
-    fun performClickOnNode(nodeIndex: Int): Boolean {
-        Log.i(TAG, "Solicitado clic en nodo con índice: $nodeIndex")
+    fun performClickOnNode(index: Int): Boolean {
+        Log.i(TAG, "Solicitado clic en nodo con índice: $index")
 
-        // 1. Intentar con el nodo guardado en memoria
-        val savedNode = savedNodes[nodeIndex]
+        // 1. Buscar en la lista guardada de nodos
+        val savedNode = savedNodes[index]
         if (savedNode != null) {
             try {
                 if (clickNodeOrParent(savedNode)) {
-                    Log.i(TAG, "Clic exitoso en nodo guardado [$nodeIndex]")
+                    Log.i(TAG, "Clic exitoso en nodo guardado [$index]")
                     return true
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Fallo al interactuar con nodo guardado [$nodeIndex]: ${e.message}")
+                Log.w(TAG, "Fallo al interactuar con nodo guardado [$index]: ${e.message}")
             }
         }
 
-        // 2. Si falló o el nodo no estaba en cache, buscarlo de forma fresca en el árbol activo
+        // 2. Si no estaba en cache o falló, buscar de forma fresca en el árbol activo
         val root = rootInActiveWindow
         if (root != null) {
             try {
-                val freshTarget = findNodeByIndex(root, nodeIndex)
+                val freshTarget = findNodeByIndex(root, index)
                 if (freshTarget != null) {
                     try {
                         val success = clickNodeOrParent(freshTarget)
-                        Log.i(TAG, "Clic en nodo fresco [$nodeIndex]: $success")
+                        Log.i(TAG, "Clic en nodo fresco [$index]: $success")
                         return success
                     } finally {
                         recycleCompat(freshTarget)
                     }
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Fallo buscando nodo fresco [$index]: ${e.message}")
             } finally {
                 recycleCompat(root)
             }
         }
 
-        Log.e(TAG, "No se encontró ningún nodo válido para el índice [$nodeIndex]")
+        Log.e(TAG, "No se encontró ningún nodo válido para el índice [$index]")
         return false
     }
 
@@ -217,34 +221,38 @@ class SilfAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Ejecuta ACTION_CLICK en el nodo. Si el nodo no responde o no es clickeable,
-     * busca en su jerarquía ascendente (padres) el contenedor clickeable más cercano.
+     * Ejecuta ACTION_CLICK en el nodo.
+     * Si ese nodo específico no tiene isClickable == true, busca recursivamente
+     * en su jerarquía de ancestros (parent) hasta encontrar un contenedor clickeable
+     * y ejecuta el clic en él.
      */
     private fun clickNodeOrParent(node: AccessibilityNodeInfo): Boolean {
+        // 1. Si el nodo específico tiene isClickable == true, intentar el clic directo
         if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             return true
         }
-        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            return true
-        }
 
-        // Buscar ancestro clickeable
+        // 2. Si no es clickeable o falló, buscar recursivamente en sus padres (parent)
+        // hasta encontrar un contenedor clickeable
         var current: AccessibilityNodeInfo? = node.parent
         while (current != null) {
             try {
                 if (current.isClickable && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "Clic exitoso en parent clickeable: ${current.className}")
+                    recycleCompat(current)
                     return true
                 }
-                if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                    return true
-                }
-            } finally {
                 val next = current.parent
                 recycleCompat(current)
                 current = next
+            } catch (e: Exception) {
+                Log.w(TAG, "Error recorriendo jerarquía de padres: ${e.message}")
+                break
             }
         }
-        return false
+
+        // 3. Como fallback de último recurso, intentar ACTION_CLICK directo en el nodo original
+        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
     private fun findNodeByIndex(root: AccessibilityNodeInfo, targetIndex: Int): AccessibilityNodeInfo? {
