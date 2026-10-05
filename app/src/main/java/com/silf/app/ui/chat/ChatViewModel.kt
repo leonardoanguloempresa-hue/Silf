@@ -88,7 +88,7 @@ class ChatViewModel(
         if (prompt.isEmpty() || _isGenerating.value) return
 
         if (!llmEngine.isReady()) {
-            _showErrorToast.value = "Configura la IP del servidor en Ajustes"
+            _showErrorToast.value = "Por favor carga un modelo GGUF en la sección de Modelos"
             return
         }
 
@@ -112,12 +112,13 @@ class ChatViewModel(
 
             val currentSnapshot = screenSnapshotFlow.value.trim()
 
-            // Inyectar el snapshot de pantalla de accesibilidad como System Prompt para el LLM
+            // System Prompt para el Agente con snapshot de pantalla y reglas de clic
             val systemPrompt = buildString {
-                append("Eres Silf, un asistente útil y preciso.")
+                append("Eres un agente que controla el teléfono. ")
                 if (currentSnapshot.isNotEmpty()) {
-                    append("\nInformación de la pantalla actual del usuario:\n$currentSnapshot")
+                    append("Ves esta pantalla:\n").append(currentSnapshot).append("\n")
                 }
+                append("Para hacer clic en un elemento, debes responder ÚNICAMENTE con el comando [CLICK: número_de_índice].")
             }
 
             // Construir el prompt de turnos para el modelo
@@ -131,6 +132,8 @@ class ChatViewModel(
 
             val builder = StringBuilder()
             val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
+            val clickRegex = Regex("""\[CLICK:\s*(\d+)\]""", RegexOption.IGNORE_CASE)
+
             try {
                 llmEngine.generateResponseStream(conversationPrompt, systemPrompt).collect { token ->
                     if (stopTokens.any { token.contains(it) }) {
@@ -143,30 +146,67 @@ class ChatViewModel(
                     }
                     if (cleanToken.isNotEmpty()) {
                         builder.append(cleanToken)
+                        val currentText = builder.toString()
+
+                        // Si ya se generó el comando completo de click, detener generación
+                        if (clickRegex.containsMatchIn(currentText)) {
+                            stopGeneration()
+                            return@collect
+                        }
+
+                        // Limpiar comando de la vista en tiempo real para no mostrarlo
+                        val textToDisplay = currentText.replace(clickRegex, "").trim()
                         _messages.value = _messages.value.map {
-                            if (it.id == responseId) it.copy(text = builder.toString()) else it
+                            if (it.id == responseId) it.copy(text = textToDisplay) else it
                         }
                     }
                 }
-                val finalResponse = builder.toString().trim()
+            } catch (c: CancellationException) {
+                // Cancelación esperada al detener generación
+            } catch (t: Throwable) {
+                _showErrorToast.value = "Error: ${t.message}"
+            } finally {
                 _isGenerating.value = false
+            }
+
+            val fullGenerated = builder.toString()
+            val clickMatch = clickRegex.find(fullGenerated)
+
+            if (clickMatch != null) {
+                val nodeIndex = clickMatch.groupValues[1].toIntOrNull()
+                if (nodeIndex != null) {
+                    // Ejecutar el clic en el servicio de accesibilidad
+                    val clickSuccess = SilfAccessibilityService.performClick(nodeIndex)
+
+                    // Extraer y no mostrar el comando [CLICK: X] en el chat
+                    val remainingText = fullGenerated.replace(clickRegex, "").trim()
+                    val textToDisplay = if (remainingText.isNotEmpty()) {
+                        remainingText
+                    } else {
+                        if (clickSuccess) "Clic ejecutado en elemento [$nodeIndex]" else "No se pudo pulsar el elemento [$nodeIndex]"
+                    }
+
+                    _messages.value = _messages.value.map {
+                        if (it.id == responseId) it.copy(text = textToDisplay) else it
+                    }
+                    chatRepository.insertMessage(text = textToDisplay, isUser = false)
+                } else {
+                    val remainingText = fullGenerated.replace(clickRegex, "").trim()
+                    _messages.value = _messages.value.map {
+                        if (it.id == responseId) it.copy(text = remainingText) else it
+                    }
+                    if (remainingText.isNotEmpty()) {
+                        chatRepository.insertMessage(text = remainingText, isUser = false)
+                    }
+                }
+            } else {
+                val finalResponse = fullGenerated.trim()
+                _messages.value = _messages.value.map {
+                    if (it.id == responseId) it.copy(text = finalResponse) else it
+                }
                 if (finalResponse.isNotEmpty()) {
                     chatRepository.insertMessage(text = finalResponse, isUser = false)
                 }
-            } catch (c: CancellationException) {
-                _isGenerating.value = false
-                val partialResponse = builder.toString().trim()
-                if (partialResponse.isNotEmpty()) {
-                    chatRepository.insertMessage(text = partialResponse, isUser = false)
-                }
-                throw c
-            } catch (t: Throwable) {
-                _isGenerating.value = false
-                _messages.value = _messages.value.map {
-                    if (it.id == responseId) it.copy(text = "Error: ${t.message}") else it
-                }
-            } finally {
-                _isGenerating.value = false
             }
         }
     }

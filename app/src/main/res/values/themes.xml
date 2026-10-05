@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Tema principal de la app: Opaco y pantalla completa -->
     <style name="Theme.Silf" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#121212</item>
+        <item name="android:statusBarColor">#121212</item>
+        <item name="android:navigationBarColor">#121212</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+    <!-- Tema para AssistantActivity: Ventana transparente flotante tipo BottomSheet -->
+    <style name="Theme.Silf.Transparent" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:colorBackground">@android:color/transparent</item>
         <item name="android:windowIsTranslucent">true</item>
@@ -11,11 +20,5 @@
         <item name="android:windowNoTitle">true</item>
         <item name="android:backgroundDimEnabled">true</item>
         <item name="android:backgroundDimAmount">0.4</item>
-    </style>
-
-    <style name="Theme.Silf.Transparent" parent="Theme.Silf">
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:colorBackground">@android:color/transparent</item>
-        <item name="android:windowIsTranslucent">true</item>
     </style>
 </resources>

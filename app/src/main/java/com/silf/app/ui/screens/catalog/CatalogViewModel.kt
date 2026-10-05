@@ -4,12 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
+import com.silf.app.data.workers.ModelDownloadContract
 import com.silf.app.domain.catalog.ModelCatalog
 import com.silf.app.domain.catalog.ModelEntry
 import com.silf.app.domain.download.DownloadRepository
 import com.silf.app.domain.download.DownloadState
 import com.silf.app.domain.download.ModelDownloadSpec
-import com.silf.app.data.workers.ModelDownloadContract
 import com.silf.app.domain.llm.LlmEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,14 +18,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-/** Estado de conexión a un servidor Ollama remoto. */
-sealed class OllamaStatus {
-    object Idle : OllamaStatus()
-    object Connecting : OllamaStatus()
-    data class Connected(val url: String) : OllamaStatus()
-    data class Error(val message: String) : OllamaStatus()
-}
 
 class CatalogViewModel(
     private val repository: DownloadRepository,
@@ -45,41 +37,30 @@ class CatalogViewModel(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // --- Estado Ollama ---
-    private val _ollamaUrl = MutableStateFlow("http://192.168.1.1:11434")
-    val ollamaUrl: StateFlow<String> = _ollamaUrl.asStateFlow()
-
-    private val _ollamaStatus = MutableStateFlow<OllamaStatus>(OllamaStatus.Idle)
-    val ollamaStatus: StateFlow<OllamaStatus> = _ollamaStatus.asStateFlow()
-
-    fun onOllamaUrlChanged(url: String) { _ollamaUrl.value = url }
-
-    /**
-     * Intenta conectar a un servidor Ollama en la URL configurada.
-     * La lógica HTTP completa se implementará en la siguiente fase.
-     * Por ahora simula el estado Connecting → Connected/Error.
-     */
-    fun connectToOllama() {
-        val url = _ollamaUrl.value.trim()
-        if (url.isBlank()) {
-            _ollamaStatus.value = OllamaStatus.Error("La URL no puede estar vacía")
-            return
-        }
-        _ollamaStatus.value = OllamaStatus.Connecting
-        viewModelScope.launch {
-            // Placeholder hasta la fase de integración HTTP con Ollama
-            _ollamaStatus.value = OllamaStatus.Error("Conexión HTTP pendiente de implementación (Fase 9)")
-        }
-    }
-
     fun dismissError() {
         _errorMessage.value = null
     }
 
     init {
+        // Inicializar estado verificando si los modelos ya existen en almacenamiento local
+        val initialMap = mutableMapOf<String, DownloadState>()
+        for (entry in availableModels) {
+            val file = repository.getDownloadedModelFile(entry.downloadSpec.fileName)
+            if (file.exists() && file.length() > 0) {
+                initialMap[entry.id] = DownloadState.Completed(
+                    workId = "",
+                    modelId = entry.id,
+                    filePath = file.absolutePath,
+                    bytes = file.length()
+                )
+            }
+        }
+        _downloadStates.value = initialMap
+
+        // Observar descargas activas en segundo plano con WorkManager
         viewModelScope.launch {
             repository.observeActiveDownloads().collect { workInfos ->
-                val newStates = mutableMapOf<String, DownloadState>()
+                val newStates = _downloadStates.value.toMutableMap()
                 for (workInfo in workInfos) {
                     val workId = workInfo.id.toString()
                     val modelIdTag = workInfo.tags.find { it.startsWith(ModelDownloadContract.UNIQUE_PREFIX) }

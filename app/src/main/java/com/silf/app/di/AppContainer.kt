@@ -5,7 +5,7 @@ import com.silf.app.data.db.SilfDatabase
 import com.silf.app.data.preferences.PreferencesManager
 import com.silf.app.data.repository.ChatRepository
 import com.silf.app.domain.download.DownloadRepository
-import com.silf.app.domain.llm.ApiEngine
+import com.silf.app.domain.llm.LlamaCppEngine
 import com.silf.app.domain.llm.LlmEngine
 
 class AppContainer(context: Context) {
@@ -14,7 +14,7 @@ class AppContainer(context: Context) {
     }
 
     val llmEngine: LlmEngine by lazy {
-        ApiEngine(preferencesManager)
+        LlamaCppEngine()
     }
 
     val downloadRepository: DownloadRepository by lazy {

@@ -46,18 +46,25 @@ class LlamaCppEngine : LlmEngine {
      * @param prompt Prompt YA FORMATEADO en ChatML por el caller (ViewModel),
      *               o texto sin procesar que se formateará con ChatML.
      */
-    override fun generateResponseStream(prompt: String): Flow<String> = callbackFlow {
+    override fun generateResponseStream(prompt: String): Flow<String> =
+        generateResponseStream(prompt, null)
+
+    override fun generateResponseStream(prompt: String, systemPrompt: String?): Flow<String> = callbackFlow {
         if (modelHandle == 0L) {
             trySend("Error: Modelo no cargado.")
             close()
             return@callbackFlow
         }
 
-        val finalPrompt = if (prompt.trimStart().startsWith("<|im_start|>")) {
+        val effectiveSystem = systemPrompt?.takeIf { it.isNotBlank() } ?: systemContext
+
+        val finalPrompt = if (prompt.trimStart().startsWith("<|im_start|>system")) {
             prompt
+        } else if (prompt.trimStart().startsWith("<|im_start|>")) {
+            "<|im_start|>system\n$effectiveSystem<|im_end|>\n$prompt"
         } else {
             val userMsg = prompt.trim()
-            "<|im_start|>system\n$systemContext<|im_end|>\n" +
+            "<|im_start|>system\n$effectiveSystem<|im_end|>\n" +
             "<|im_start|>user\n${userMsg}<|im_end|>\n" +
             "<|im_start|>assistant\n"
         }

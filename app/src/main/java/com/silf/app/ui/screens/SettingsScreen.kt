@@ -1,34 +1,37 @@
 package com.silf.app.ui.screens
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.silf.app.SilfApplication
-import com.silf.app.data.preferences.PreferencesManager
+import com.silf.app.accessibility.SilfAccessibilityService
 import com.silf.app.ui.theme.SilfCardSurface
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen() {
     val context = LocalContext.current
     val application = context.applicationContext as SilfApplication
-    val prefs = application.container.preferencesManager
+    val container = application.container
+    val coroutineScope = rememberCoroutineScope()
 
-    val currentUrl by prefs.endpointUrl.collectAsState()
-    val currentModel by prefs.modelName.collectAsState()
-
-    var urlInput by remember(currentUrl) { mutableStateOf(currentUrl) }
-    var modelInput by remember(currentModel) { mutableStateOf(currentModel) }
-    var savedFeedback by remember { mutableStateOf(false) }
+    var historyClearedFeedback by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -39,18 +42,19 @@ fun SettingsScreen() {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(
-            text = "Configuración del Servidor",
+            text = "Ajustes de Silf",
             style = MaterialTheme.typography.headlineSmall,
             color = Color.White,
             fontWeight = FontWeight.Bold
         )
 
         Text(
-            text = "Silf funciona como Cliente ligero. El modelo se ejecuta en tu PC en la red local Wi-Fi mediante Ollama (u otro servidor HTTP compatible). No requiere descargar archivos pesados al teléfono.",
+            text = "Configuración del asistente local Silf, permisos del sistema y motor de inferencia en dispositivo.",
             style = MaterialTheme.typography.bodyMedium,
             color = Color.Gray
         )
 
+        // Tarjeta 1: Servicio de Accesibilidad (Visión y Manos de la IA)
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = SilfCardSurface),
@@ -58,96 +62,60 @@ fun SettingsScreen() {
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    text = "Conexión Wi-Fi / LAN",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                OutlinedTextField(
-                    value = urlInput,
-                    onValueChange = {
-                        urlInput = it
-                        savedFeedback = false
-                    },
-                    label = { Text("URL del Endpoint (PC)") },
-                    placeholder = { Text(PreferencesManager.DEFAULT_ENDPOINT_URL) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = Color.Gray,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = Color.Gray
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = modelInput,
-                    onValueChange = {
-                        modelInput = it
-                        savedFeedback = false
-                    },
-                    label = { Text("Nombre del Modelo (Ollama)") },
-                    placeholder = { Text(PreferencesManager.DEFAULT_MODEL_NAME) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = Color.Gray,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = Color.Gray
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    TextButton(
-                        onClick = {
-                            urlInput = PreferencesManager.DEFAULT_ENDPOINT_URL
-                            modelInput = PreferencesManager.DEFAULT_MODEL_NAME
-                            prefs.setEndpointUrl(urlInput)
-                            prefs.setModelName(modelInput)
-                            savedFeedback = true
-                        }
+                    Text(
+                        text = "Servicio de Accesibilidad",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text("Restablecer", color = Color.Gray)
-                    }
-
-                    Button(
-                        onClick = {
-                            prefs.setEndpointUrl(urlInput)
-                            prefs.setModelName(modelInput)
-                            savedFeedback = true
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(if (SilfAccessibilityService.isEnabled) Color(0xFF00E676) else Color(0xFFFF5252))
                         )
-                    ) {
-                        Text("Guardar", color = Color.Black, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = if (SilfAccessibilityService.isEnabled) "Habilitado" else "Deshabilitado",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (SilfAccessibilityService.isEnabled) Color(0xFF00E676) else Color(0xFFFF5252),
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
 
-                if (savedFeedback) {
-                    Text(
-                        text = "✓ Configuración guardada en SharedPreferences",
-                        color = Color(0xFF00E676),
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                Text(
+                    text = "El servicio de accesibilidad permite a Silf leer los elementos de la pantalla (Visión) y ejecutar acciones de clic automáticas cuando emite un comando [CLICK: X].",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.LightGray
+                )
+
+                Button(
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Abrir Ajustes de Accesibilidad", color = Color.Black, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
+        // Tarjeta 2: Motor LLM Local (Llama.cpp en RAM)
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = SilfCardSurface),
@@ -155,19 +123,141 @@ fun SettingsScreen() {
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Motor LLM Local (Llama.cpp)",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(if (container.llmEngine.isReady()) Color(0xFF00E676) else Color(0xFFFF9100))
+                        )
+                        Text(
+                            text = if (container.llmEngine.isReady()) "Cargado en RAM" else "Sin modelo",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (container.llmEngine.isReady()) Color(0xFF00E676) else Color(0xFFFF9100),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Silf opera con inferencia 100% offline y privada en tu dispositivo móvil. Los modelos en formato GGUF se cargan en la memoria RAM y se procesan nativamente con C++.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.LightGray
+                )
+
+                Text(
+                    text = "Para descargar o cargar un modelo GGUF en memoria, ve a la pestaña 'Modelos'. Una vez cargado, permanecerá listo en RAM para la ventana del Asistente.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        // Tarjeta 3: Configurar Asistente Predeterminado (Movicom)
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SilfCardSurface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Instrucciones Rápidas",
+                    text = "Asistente Predeterminado del Sistema",
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White,
                     fontWeight = FontWeight.SemiBold
                 )
+
                 Text(
-                    text = "1. En tu PC, abre una terminal y ejecuta Ollama con acceso de red:\n   OLLAMA_HOST=0.0.0.0 ollama run qwen2.5:3b\n2. Asegúrate de que el teléfono y la PC estén en la misma red Wi-Fi.\n3. Configura la IP local de tu PC en el campo superior (ej. http://192.168.1.80:11434/api/generate).",
+                    text = "Puedes activar la ventana flotante de Silf Assistant manteniendo presionado el botón de inicio o deslizando desde las esquinas inferiores.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.LightGray
                 )
+
+                OutlinedButton(
+                    onClick = {
+                        try {
+                            val intent = Intent(Settings.ACTION_VOICE_INPUT_SETTINGS).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            val intent = Intent(Settings.ACTION_SETTINGS).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Configurar Asistente en Android", color = Color.White)
+                }
+            }
+        }
+
+        // Tarjeta 4: Historial de Conversación
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SilfCardSurface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Historial de Mensajes",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Text(
+                    text = "Los mensajes se almacenan en una base de datos local SQLite (Room) para dar continuidad a las conversaciones con el asistente.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.LightGray
+                )
+
+                Button(
+                    onClick = {
+                        coroutineScope.launch {
+                            container.chatRepository.clearHistory()
+                            historyClearedFeedback = true
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.8f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(imageVector = Icons.Default.Delete, contentDescription = null, tint = Color.White)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Borrar Historial de Chat", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+
+                if (historyClearedFeedback) {
+                    Text(
+                        text = "✓ Historial eliminado correctamente",
+                        color = Color(0xFF00E676),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
     }

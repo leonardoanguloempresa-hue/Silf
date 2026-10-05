@@ -10,20 +10,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Fase 9: Servicio de Accesibilidad (solo lectura de pantalla).
+ * Fase 9 y 11: Servicio de Accesibilidad para lectura de pantalla y ejecución de acciones (clics).
  *
- * Recorre recursivamente rootInActiveWindow y genera un "String simplificado" de la UI
- * pensado para inyectarse como contexto al LLM. Ejemplo de salida:
- *
- *   [app: com.android.settings]
- *   [0] TextView "Wi-Fi"
- *   [1] Switch "Wi-Fi" desc="Activado" (clickable,checked)
- *   [2] Button "Guardar" (clickable)
- *
- * Los índices [n] quedan reservados para que en una fase posterior el LLM pueda
- * referirse a un nodo concreto (p. ej. "click 2").
+ * Recorre recursivamente rootInActiveWindow y genera un snapshot simplificado de la UI
+ * inyectable como contexto al LLM. Además, almacena referencias a los nodos indexados
+ * para permitir que el agente IA interactúe con la interfaz mediante [CLICK: X].
  */
 class SilfAccessibilityService : AccessibilityService() {
+
+    // Nodos guardados del último snapshot indexado
+    private val savedNodes = mutableMapOf<Int, AccessibilityNodeInfo>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -48,7 +44,6 @@ class SilfAccessibilityService : AccessibilityService() {
                     val snapshot = captureScreen()
                     if (snapshot != null) _screenSnapshot.value = snapshot
                 } catch (e: Exception) {
-                    // Nunca tumbar el servicio por un árbol de UI inesperado
                     Log.e(TAG, "Error leyendo la pantalla", e)
                 }
             }
@@ -64,16 +59,27 @@ class SilfAccessibilityService : AccessibilityService() {
             instance = null
             _screenSnapshot.value = ""
         }
+        clearSavedNodes()
         super.onDestroy()
+    }
+
+    private fun clearSavedNodes() {
+        for ((_, node) in savedNodes) {
+            recycleCompat(node)
+        }
+        savedNodes.clear()
     }
 
     /**
      * Lee la ventana activa y devuelve su representación simplificada,
-     * o null si no hay ventana disponible o si la ventana pertenece a Silf.
+     * almacenando en savedNodes los nodos correspondientes a cada índice.
      */
     fun captureScreen(): String? {
         val root = rootInActiveWindow ?: return null
         if (root.packageName == packageName) return null
+
+        clearSavedNodes()
+
         val sb = StringBuilder()
         sb.append("[app: ").append(root.packageName ?: "desconocida").append("]\n")
         val counter = intArrayOf(0)
@@ -86,9 +92,8 @@ class SilfAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Recorrido recursivo en profundidad. Solo emite nodos con información útil
-     * (texto, descripción o interactivos); los contenedores vacíos se omiten pero
-     * sus hijos sí se visitan.
+     * Recorrido recursivo en profundidad. Guarda nodos interactivos o informativos
+     * asociándolos al índice actual.
      */
     private fun traverse(
         node: AccessibilityNodeInfo,
@@ -106,8 +111,9 @@ class SilfAccessibilityService : AccessibilityService() {
         val scrollable = node.isScrollable
 
         if (text.isNotEmpty() || desc.isNotEmpty() || clickable || editable) {
+            val idx = counter[0]
             val className = node.className?.toString()?.substringAfterLast('.') ?: "View"
-            out.append("[").append(counter[0]).append("] ").append(className)
+            out.append("[").append(idx).append("] ").append(className)
             if (text.isNotEmpty()) out.append(" \"").append(text.take(MAX_TEXT_LEN)).append('"')
             if (desc.isNotEmpty() && desc != text) {
                 out.append(" desc=\"").append(desc.take(MAX_TEXT_LEN)).append('"')
@@ -120,6 +126,14 @@ class SilfAccessibilityService : AccessibilityService() {
             }
             if (flags.isNotEmpty()) out.append(" (").append(flags.joinToString(",")).append(')')
             out.append('\n')
+
+            // Guardar copia del nodo para permitir clics futuros por índice
+            try {
+                savedNodes[idx] = AccessibilityNodeInfo.obtain(node)
+            } catch (e: Exception) {
+                Log.w(TAG, "No se pudo obtener copia del nodo [$idx]: ${e.message}")
+            }
+
             counter[0]++
         }
 
@@ -133,9 +147,146 @@ class SilfAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Fase 11: Realiza un clic sobre el nodo especificado por su índice en la pantalla.
+     * Busca primero en los nodos guardados en el último snapshot, y si no es válido
+     * o no se encuentra, busca en el árbol activo actual.
+     */
+    fun performClickOnNode(nodeIndex: Int): Boolean {
+        Log.i(TAG, "Solicitado clic en nodo con índice: $nodeIndex")
+
+        // 1. Intentar con el nodo guardado en memoria
+        val savedNode = savedNodes[nodeIndex]
+        if (savedNode != null) {
+            try {
+                if (clickNodeOrParent(savedNode)) {
+                    Log.i(TAG, "Clic exitoso en nodo guardado [$nodeIndex]")
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Fallo al interactuar con nodo guardado [$nodeIndex]: ${e.message}")
+            }
+        }
+
+        // 2. Si falló o el nodo no estaba en cache, buscarlo de forma fresca en el árbol activo
+        val root = rootInActiveWindow
+        if (root != null) {
+            try {
+                val freshTarget = findNodeByIndex(root, nodeIndex)
+                if (freshTarget != null) {
+                    try {
+                        val success = clickNodeOrParent(freshTarget)
+                        Log.i(TAG, "Clic en nodo fresco [$nodeIndex]: $success")
+                        return success
+                    } finally {
+                        recycleCompat(freshTarget)
+                    }
+                }
+            } finally {
+                recycleCompat(root)
+            }
+        }
+
+        Log.e(TAG, "No se encontró ningún nodo válido para el índice [$nodeIndex]")
+        return false
+    }
+
+    /**
+     * Fase 11: Realiza un clic buscando el primer nodo con el texto especificado.
+     */
+    fun performClickOnNode(nodeText: String): Boolean {
+        Log.i(TAG, "Solicitado clic en nodo con texto: \"$nodeText\"")
+        val root = rootInActiveWindow ?: return false
+        try {
+            val matchingNodes = root.findAccessibilityNodeInfosByText(nodeText)
+            for (node in matchingNodes) {
+                try {
+                    if (clickNodeOrParent(node)) {
+                        Log.i(TAG, "Clic exitoso en nodo con texto \"$nodeText\"")
+                        return true
+                    }
+                } finally {
+                    recycleCompat(node)
+                }
+            }
+        } finally {
+            recycleCompat(root)
+        }
+        Log.e(TAG, "No se encontró ningún nodo clickable con texto \"$nodeText\"")
+        return false
+    }
+
+    /**
+     * Ejecuta ACTION_CLICK en el nodo. Si el nodo no responde o no es clickeable,
+     * busca en su jerarquía ascendente (padres) el contenedor clickeable más cercano.
+     */
+    private fun clickNodeOrParent(node: AccessibilityNodeInfo): Boolean {
+        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return true
+        }
+        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return true
+        }
+
+        // Buscar ancestro clickeable
+        var current: AccessibilityNodeInfo? = node.parent
+        while (current != null) {
+            try {
+                if (current.isClickable && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return true
+                }
+                if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return true
+                }
+            } finally {
+                val next = current.parent
+                recycleCompat(current)
+                current = next
+            }
+        }
+        return false
+    }
+
+    private fun findNodeByIndex(root: AccessibilityNodeInfo, targetIndex: Int): AccessibilityNodeInfo? {
+        val counter = intArrayOf(0)
+        return searchByIndex(root, depth = 0, counter = counter, targetIndex = targetIndex)
+    }
+
+    private fun searchByIndex(
+        node: AccessibilityNodeInfo,
+        depth: Int,
+        counter: IntArray,
+        targetIndex: Int
+    ): AccessibilityNodeInfo? {
+        if (depth > MAX_DEPTH || counter[0] > targetIndex) return null
+        if (!node.isVisibleToUser) return null
+
+        val text = node.text?.toString()?.trim().orEmpty()
+        val desc = node.contentDescription?.toString()?.trim().orEmpty()
+        val clickable = node.isClickable
+        val editable = node.isEditable
+
+        if (text.isNotEmpty() || desc.isNotEmpty() || clickable || editable) {
+            if (counter[0] == targetIndex) {
+                return AccessibilityNodeInfo.obtain(node)
+            }
+            counter[0]++
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            try {
+                val found = searchByIndex(child, depth + 1, counter, targetIndex)
+                if (found != null) return found
+            } finally {
+                recycleCompat(child)
+            }
+        }
+        return null
+    }
+
     @Suppress("DEPRECATION")
     private fun recycleCompat(node: AccessibilityNodeInfo) {
-        // En API 33+ recycle() es no-op; en versiones previas evita fugas del pool.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             try { node.recycle() } catch (_: IllegalStateException) { }
         }
@@ -147,15 +298,27 @@ class SilfAccessibilityService : AccessibilityService() {
         private const val MAX_NODES = 300
         private const val MAX_TEXT_LEN = 120
 
-        /** Instancia activa (null si el usuario no ha habilitado el servicio). */
         @Volatile
         var instance: SilfAccessibilityService? = null
             private set
 
         private val _screenSnapshot = MutableStateFlow("")
-        /** Última captura simplificada de la pantalla, observable desde UI/ViewModel. */
         val screenSnapshot: StateFlow<String> = _screenSnapshot.asStateFlow()
 
         val isEnabled: Boolean get() = instance != null
+
+        /**
+         * Permite ejecutar un clic por índice desde cualquier ViewModel o componente.
+         */
+        fun performClick(nodeIndex: Int): Boolean {
+            return instance?.performClickOnNode(nodeIndex) ?: false
+        }
+
+        /**
+         * Permite ejecutar un clic por texto desde cualquier ViewModel o componente.
+         */
+        fun performClick(nodeText: String): Boolean {
+            return instance?.performClickOnNode(nodeText) ?: false
+        }
     }
 }

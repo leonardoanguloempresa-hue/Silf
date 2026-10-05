@@ -16,7 +16,8 @@ import kotlinx.coroutines.flow.map
 
 class DownloadRepository(context: Context) {
 
-    private val workManager = WorkManager.getInstance(context.applicationContext)
+    private val appContext: Context = context.applicationContext
+    private val workManager = WorkManager.getInstance(appContext)
 
     fun startModelDownload(spec: ModelDownloadSpec): Flow<DownloadState> {
         val validation = spec.validate()
@@ -87,5 +88,15 @@ class DownloadRepository(context: Context) {
 
     fun observeActiveDownloads(): Flow<List<WorkInfo>> {
         return workManager.getWorkInfosByTagLiveData(ModelDownloadContract.DOWNLOAD_TAG).asFlow()
+    }
+
+    fun getDownloadedModelFile(fileName: String): java.io.File {
+        val modelsDir = java.io.File(appContext.filesDir, "models")
+        return java.io.File(modelsDir, fileName)
+    }
+
+    fun isModelDownloaded(fileName: String): Boolean {
+        val file = getDownloadedModelFile(fileName)
+        return file.exists() && file.length() > 0
     }
 }
