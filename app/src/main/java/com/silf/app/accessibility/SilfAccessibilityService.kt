@@ -25,8 +25,8 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 class SilfAccessibilityService : AccessibilityService() {
 
-    // Nodos guardados del último snapshot indexado
-    private val savedNodes = mutableMapOf<Int, AccessibilityNodeInfo>()
+    // Diccionario de coordenadas para bypass de reciclaje de AccessibilityNodeInfo
+    val coordinateMap = mutableMapOf<Int, Rect>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -43,11 +43,13 @@ class SilfAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val eventPkg = event.packageName?.toString().orEmpty()
-        // Cuando el evento provenga del paquete de Silf (com.silf.app o packageName),
-        // NO borres ni actualices la lista actual de nodos (savedNodes) ni el screenSnapshot.
-        // Debes conservar intacta la última "foto" de la pantalla que el usuario estaba viendo antes de invocar a Silf.
-        if (eventPkg == packageName || eventPkg == "com.silf.app") {
-            Log.d(TAG, "Evento ignorado de Silf ($eventPkg): conservando snapshot congelado (${savedNodes.size} nodos)")
+
+        // Filtro de Actualización:
+        // Asegúrate de que coordinateMap y screenSnapshot se actualicen SOLAMENTE cuando
+        // el AccessibilityEvent provenga de un paquete distinto a tu propia app, para que
+        // la caché de coordenadas no se sobrescriba con la interfaz de Silf.
+        if (eventPkg.isEmpty() || eventPkg == packageName || eventPkg == "com.silf.app") {
+            Log.d(TAG, "Evento ignorado de Silf ($eventPkg): conservando coordinateMap congelado (${coordinateMap.size} coordenadas)")
             return
         }
 
@@ -73,15 +75,8 @@ class SilfAccessibilityService : AccessibilityService() {
             instance = null
             _screenSnapshot.value = ""
         }
-        clearSavedNodes()
+        coordinateMap.clear()
         super.onDestroy()
-    }
-
-    private fun clearSavedNodes() {
-        for ((_, node) in savedNodes) {
-            recycleCompat(node)
-        }
-        savedNodes.clear()
     }
 
     /**
@@ -108,10 +103,10 @@ class SilfAccessibilityService : AccessibilityService() {
 
     /**
      * Lee la ventana activa y devuelve su representación simplificada,
-     * almacenando en savedNodes los nodos correspondientes a cada índice.
-     * FILTRA e IGNORA la propia interfaz de Silf para evitar confusiones al LLM.
-     * Si la ventana activa es de Silf y no se encuentra otra ventana, conserva
-     * intactos savedNodes y el snapshot congelado.
+     * extrayendo y almacenando en coordinateMap los límites de pantalla de cada nodo.
+     * FILTRA e IGNORA la propia interfaz de Silf.
+     * Si la ventana activa es de Silf y no se encuentra otra ventana externa,
+     * conserva intacto coordinateMap y el snapshot congelado.
      */
     fun captureScreen(): String? {
         var root = rootInActiveWindow
@@ -123,14 +118,15 @@ class SilfAccessibilityService : AccessibilityService() {
         }
 
         // Si la ventana encontrada sigue siendo de Silf o no existe,
-        // NO borramos savedNodes ni _screenSnapshot para preservar intacta la última foto congelada.
+        // NO borramos coordinateMap ni _screenSnapshot para preservar intacta la última foto congelada.
         if (root == null || root.packageName == packageName || root.packageName?.toString() == "com.silf.app") {
             recycleCompat(root)
-            Log.d(TAG, "Ventana externa no-Silf no disponible. Conservando snapshot y nodos congelados (${savedNodes.size} nodos).")
+            Log.d(TAG, "Ventana externa no-Silf no disponible. Conservando coordinateMap congelado (${coordinateMap.size} coordenadas).")
             return _screenSnapshot.value.takeIf { it.isNotBlank() }
         }
 
-        clearSavedNodes()
+        // Actualizar coordinateMap y snapshot SOLO con la app externa
+        coordinateMap.clear()
 
         val sb = StringBuilder()
         sb.append("[app: ").append(root.packageName ?: "desconocida").append("]\n")
@@ -142,13 +138,14 @@ class SilfAccessibilityService : AccessibilityService() {
         }
         val result = sb.toString().trimEnd()
         _screenSnapshot.value = result
-        Log.i(TAG, "Snapshot congelado actualizado para ${root.packageName}: ${counter[0]} nodos indexados")
+        Log.i(TAG, "Snapshot y coordinateMap actualizados para ${root.packageName}: ${counter[0]} coordenadas indexadas")
         return result
     }
 
     /**
      * Recorrido recursivo en profundidad.
      * IGNORA/FILTRA todos los nodos cuyo packageName sea el de la propia aplicación (Silf).
+     * Para cada nodo elegible, extrae los límites de pantalla (Rect) y los guarda en coordinateMap.
      */
     private fun traverse(
         node: AccessibilityNodeInfo,
@@ -157,8 +154,8 @@ class SilfAccessibilityService : AccessibilityService() {
         counter: IntArray
     ) {
         if (depth > MAX_DEPTH || counter[0] >= MAX_NODES) return
-        // Ignorar la propia UI de Silf
-        if (node.packageName == packageName) return
+        val pkg = node.packageName?.toString().orEmpty()
+        if (pkg == packageName || pkg == "com.silf.app") return
         if (!node.isVisibleToUser) return
 
         val text = node.text?.toString()?.trim().orEmpty()
@@ -184,12 +181,11 @@ class SilfAccessibilityService : AccessibilityService() {
             if (flags.isNotEmpty()) out.append(" (").append(flags.joinToString(",")).append(')')
             out.append('\n')
 
-            // Guardar copia del nodo para permitir clics futuros por coordenadas
-            try {
-                savedNodes[idx] = AccessibilityNodeInfo.obtain(node)
-            } catch (e: Exception) {
-                Log.w(TAG, "No se pudo obtener copia del nodo [$idx]: ${e.message}")
-            }
+            // Diccionario de Coordenadas (Bypass de Nodos):
+            // Extrae los límites de cada nodo y guárdalo en coordinateMap
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            coordinateMap[idx] = rect
 
             counter[0]++
         }
@@ -204,12 +200,6 @@ class SilfAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Despacha un toque físico (tap) en las coordenadas exactas de la pantalla
-     * usando la API GestureDescription (API 24+).
-     * Esto funciona de forma garantizada en MIUI, ColorOS y lanzadores personalizados
-     * donde node.performAction(ACTION_CLICK) suele fallar o ser bloqueado.
-     */
     /**
      * Despacha un toque físico (tap) en las coordenadas exactas de la pantalla
      * usando la API GestureDescription (API 24+).
@@ -238,10 +228,9 @@ class SilfAccessibilityService : AccessibilityService() {
                 Log.i(TAG, "dispatchGesture retornado en Main thread: $dispatched")
                 dispatched
             } else {
-                var dispatched = false
                 Handler(Looper.getMainLooper()).post {
                     try {
-                        dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+                        val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
                             override fun onCompleted(gestureDescription: GestureDescription?) {
                                 Log.i(TAG, "Gesto de clic en ($x, $y) completado exitosamente")
                             }
@@ -264,96 +253,24 @@ class SilfAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Si el nodo no tiene isClickable == true, busca recursivamente hacia arriba:
-     * var current = node; while(current != null && !current.isClickable) { current = current.parent }
-     * Si encuentra un parent clickeable, usa ese.
-     */
-    private fun findClickableTarget(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
-        if (node.isClickable) return node
-        var current: AccessibilityNodeInfo? = node.parent
-        while (current != null && !current.isClickable) {
-            val next = current.parent
-            recycleCompat(current)
-            current = next
-        }
-        if (current != null && current.isClickable) {
-            Log.i(TAG, "Nodo original no clickeable. Encontrado parent clickeable: ${current.className}")
-            return current
-        }
-        return node
-    }
-
-    /**
-     * Realiza un clic sobre el nodo especificado por su índice en la pantalla.
-     * Si el nodo no es clickeable, busca recursivamente un parent clickeable.
-     * Retorna el Rect con las coordenadas reales del clic, o null si falla.
+     * Toques Ciegos (Blind Taps): Busca directamente en coordinateMap por ID.
+     * Ya no interactúa con el objeto AccessibilityNodeInfo para evitar el reciclaje e invalidación del OS.
+     * Si el Rect existe, calcula exactCenterX() y exactCenterY() y despacha GestureDescription en el Main Thread.
+     * Retorna el Rect encontrado, o null si el ID no existe en coordinateMap.
      */
     fun performClickOnNode(index: Int): Rect? {
-        Log.i(TAG, "Solicitado clic por coordenadas en nodo con índice: $index")
+        Log.i(TAG, "Solicitado toque ciego por coordenadas en nodo con ID: $index")
 
-        // 1. Buscar en la lista guardada de nodos
-        val savedNode = savedNodes[index]
-        if (savedNode != null) {
-            try {
-                val target = findClickableTarget(savedNode)
-                val rect = Rect()
-                target.getBoundsInScreen(rect)
-                if (target !== savedNode) {
-                    recycleCompat(target)
-                }
-                if (rect.width() > 0 && rect.height() > 0) {
-                    val centerX = rect.exactCenterX()
-                    val centerY = rect.exactCenterY()
-                    Log.i(TAG, "Coordenadas obtenidas de savedNodes[$index]: bounds=$rect centro=($centerX, $centerY)")
-                    val dispatched = clickAt(centerX, centerY)
-                    if (dispatched) return rect
-                } else {
-                    Log.w(TAG, "Nodo guardado [$index] tiene dimensiones inválidas: width=${rect.width()}, height=${rect.height()}")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Fallo al obtener coordenadas de nodo guardado [$index]: ${e.message}")
-            }
+        val rect = coordinateMap[index]
+        if (rect != null) {
+            val centerX = rect.exactCenterX()
+            val centerY = rect.exactCenterY()
+            Log.i(TAG, "Coordenadas encontradas en coordinateMap[$index]: bounds=$rect centro=($centerX, $centerY)")
+            clickAt(centerX, centerY)
+            return rect
         }
 
-        // 2. Si no estaba en la lista congelada o bounds vacíos, buscar de forma fresca en el árbol activo
-        var root = rootInActiveWindow
-        if (root == null || root.packageName == packageName || root.packageName?.toString() == "com.silf.app") {
-            recycleCompat(root)
-            root = findTargetWindowRoot()
-        }
-
-        if (root != null) {
-            try {
-                val freshTarget = findNodeByIndex(root, index)
-                if (freshTarget != null) {
-                    try {
-                        val target = findClickableTarget(freshTarget)
-                        val rect = Rect()
-                        target.getBoundsInScreen(rect)
-                        if (target !== freshTarget) {
-                            recycleCompat(target)
-                        }
-                        if (rect.width() > 0 && rect.height() > 0) {
-                            val centerX = rect.exactCenterX()
-                            val centerY = rect.exactCenterY()
-                            Log.i(TAG, "Coordenadas de nodo fresco [$index]: bounds=$rect centro=($centerX, $centerY)")
-                            val dispatched = clickAt(centerX, centerY)
-                            if (dispatched) return rect
-                        } else {
-                            Log.w(TAG, "Nodo fresco [$index] tiene dimensiones inválidas: width=${rect.width()}, height=${rect.height()}")
-                        }
-                    } finally {
-                        recycleCompat(freshTarget)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Fallo al buscar coordenadas en árbol activo [$index]: ${e.message}")
-            } finally {
-                recycleCompat(root)
-            }
-        }
-
-        Log.e(TAG, "No se encontraron coordenadas válidas para el índice [$index]")
+        Log.e(TAG, "Nodo no encontrado: ID [$index] no existe en coordinateMap (${coordinateMap.size} coordenadas registradas)")
         return null
     }
 
@@ -374,15 +291,11 @@ class SilfAccessibilityService : AccessibilityService() {
                 try {
                     val pkg = node.packageName?.toString().orEmpty()
                     if (pkg == packageName || pkg == "com.silf.app") continue
-                    val target = findClickableTarget(node)
                     val rect = Rect()
-                    target.getBoundsInScreen(rect)
-                    if (target !== node) {
-                        recycleCompat(target)
-                    }
+                    node.getBoundsInScreen(rect)
                     if (rect.width() > 0 && rect.height() > 0) {
-                        val dispatched = clickAt(rect.exactCenterX(), rect.exactCenterY())
-                        if (dispatched) return rect
+                        clickAt(rect.exactCenterX(), rect.exactCenterY())
+                        return rect
                     }
                 } finally {
                     recycleCompat(node)
@@ -392,46 +305,6 @@ class SilfAccessibilityService : AccessibilityService() {
             recycleCompat(root)
         }
         Log.e(TAG, "No se encontró ningún nodo clickable con texto \"$nodeText\"")
-        return null
-    }
-
-    private fun findNodeByIndex(root: AccessibilityNodeInfo, targetIndex: Int): AccessibilityNodeInfo? {
-        val counter = intArrayOf(0)
-        return searchByIndex(root, depth = 0, counter = counter, targetIndex = targetIndex)
-    }
-
-    private fun searchByIndex(
-        node: AccessibilityNodeInfo,
-        depth: Int,
-        counter: IntArray,
-        targetIndex: Int
-    ): AccessibilityNodeInfo? {
-        if (depth > MAX_DEPTH || counter[0] > targetIndex) return null
-        val pkg = node.packageName?.toString().orEmpty()
-        if (pkg == packageName || pkg == "com.silf.app") return null
-        if (!node.isVisibleToUser) return null
-
-        val text = node.text?.toString()?.trim().orEmpty()
-        val desc = node.contentDescription?.toString()?.trim().orEmpty()
-        val clickable = node.isClickable
-        val editable = node.isEditable
-
-        if (text.isNotEmpty() || desc.isNotEmpty() || clickable || editable) {
-            if (counter[0] == targetIndex) {
-                return AccessibilityNodeInfo.obtain(node)
-            }
-            counter[0]++
-        }
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            try {
-                val found = searchByIndex(child, depth + 1, counter, targetIndex)
-                if (found != null) return found
-            } finally {
-                recycleCompat(child)
-            }
-        }
         return null
     }
 
@@ -474,13 +347,13 @@ class SilfAccessibilityService : AccessibilityService() {
 
         /**
          * Obtiene el snapshot congelado de la pantalla activa para el prompt.
-         * Si ya existe un snapshot previo y nodos guardados, se conservan intactos
+         * Si ya existe un snapshot previo y coordinateMap tiene elementos, se conservan intactos
          * para no borrar la pantalla que el usuario estaba viendo antes de abrir Silf.
          */
         fun getFreshScreenSnapshot(): String {
             val inst = instance ?: return _screenSnapshot.value
-            if (_screenSnapshot.value.isNotBlank() && inst.savedNodes.isNotEmpty()) {
-                Log.d(TAG, "getFreshScreenSnapshot: usando snapshot congelado con ${inst.savedNodes.size} nodos")
+            if (_screenSnapshot.value.isNotBlank() && inst.coordinateMap.isNotEmpty()) {
+                Log.d(TAG, "getFreshScreenSnapshot: usando snapshot congelado con ${inst.coordinateMap.size} coordenadas")
                 return _screenSnapshot.value
             }
             return try {
@@ -498,3 +371,5 @@ class SilfAccessibilityService : AccessibilityService() {
         }
     }
 }
+
+

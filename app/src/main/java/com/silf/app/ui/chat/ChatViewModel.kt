@@ -120,10 +120,12 @@ class ChatViewModel(
             }.trim()
             val userMessage = prompt.trim()
 
-            // System Prompt Simplificado para el Agente:
-            // El LLM recibe ÚNICAMENTE el último par (System Prompt con Snapshot actual + User Message), sin historial pasado
+            // Inferencia Sin Estado (Zero-Shot):
+            // NUNCA se pasa el historial completo de mensajes al motor LLM.
+            // Se construye un prompt fresco que contiene ÚNICAMENTE el System Prompt (con el screenSnapshot más reciente)
+            // y el Mensaje del Usuario actual. Esto fuerza al LLM a no repetir respuestas anteriores ni alucinar.
             val strictPrompt = if (screenSnapshot.isNotEmpty()) {
-                "<|im_start|>system\nEres un agente. Pantalla: $screenSnapshot. Responde ÚNICA Y EXCLUSIVAMENTE con el [ID] del botón a tocar, entre corchetes. Ejemplo: [5]<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
+                "<|im_start|>system\nEres un agente de control de interfaz. Pantalla actual:\n$screenSnapshot\nResponde ÚNICA Y EXCLUSIVAMENTE con el [ID] del botón o elemento a tocar, entre corchetes. Ejemplo: [5]<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
             } else {
                 "<|im_start|>system\nEres Silf, un asistente útil y preciso.<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
             }
