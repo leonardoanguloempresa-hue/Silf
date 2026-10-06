@@ -31,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -42,6 +43,7 @@ import com.silf.app.ui.theme.SilfCardSurface
 @Composable
 fun AssistantScreen() {
     val context = LocalContext.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val activity = context as? Activity
     val application = context.applicationContext as SilfApplication
     val container = application.container
@@ -232,12 +234,18 @@ fun AssistantScreen() {
                             focusedContainerColor = Color.Black.copy(alpha = 0.35f),
                             unfocusedContainerColor = Color.Black.copy(alpha = 0.2f)
                         ),
-                        keyboardActions = KeyboardActions(onSend = { chatViewModel.onSendMessage() }),
+                        keyboardActions = KeyboardActions(onSend = {
+                            keyboardController?.hide()
+                            chatViewModel.onSendMessage()
+                        }),
                         singleLine = true
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
-                        onClick = { chatViewModel.onSendMessage() },
+                        onClick = {
+                            keyboardController?.hide()
+                            chatViewModel.onSendMessage()
+                        },
                         enabled = draftText.isNotBlank() && !isGenerating
                     ) {
                         Icon(

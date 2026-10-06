@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -79,6 +80,7 @@ private val EyeIcon: ImageVector by lazy {
 @Composable
 fun ChatScreen() {
     val context = LocalContext.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val application = context.applicationContext as SilfApplication
     val container = application.container
     val chatViewModel: ChatViewModel = viewModel(
@@ -220,12 +222,18 @@ fun ChatScreen() {
                     focusedContainerColor = SilfCardSurface,
                     unfocusedContainerColor = SilfCardSurface.copy(alpha = 0.6f)
                 ),
-                keyboardActions = KeyboardActions(onSend = { chatViewModel.onSendMessage() }),
+                keyboardActions = KeyboardActions(onSend = {
+                    keyboardController?.hide()
+                    chatViewModel.onSendMessage()
+                }),
                 singleLine = true
             )
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
-                onClick = { chatViewModel.onSendMessage() },
+                onClick = {
+                    keyboardController?.hide()
+                    chatViewModel.onSendMessage()
+                },
                 enabled = draftText.isNotBlank() && !isGenerating
             ) {
                 Icon(

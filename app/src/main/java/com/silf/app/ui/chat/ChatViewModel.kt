@@ -154,17 +154,9 @@ class ChatViewModel(
                             val id = match.groupValues[1].toIntOrNull()
                             if (id != null) {
                                 clickExecuted = true
-                                // Ejecutar clic por coordenadas en el Hilo Principal y obtener el Rect real
-                                val rect = withContext(Dispatchers.Main) {
-                                    SilfAccessibilityService.instance?.performClickOnNode(id)
-                                }
-                                // Feedback visual: Toast con coordenadas exactas en el Hilo Principal
+                                // Ejecutar clic por coordenadas en el Hilo Principal
                                 withContext(Dispatchers.Main) {
-                                    if (rect != null) {
-                                        Toast.makeText(context, "Silf: Clic en [$id] -> X:${rect.centerX()}, Y:${rect.centerY()}", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(context, "Silf: Clic en [$id] -> Nodo no encontrado", Toast.LENGTH_SHORT).show()
-                                    }
+                                    SilfAccessibilityService.instance?.performClickOnNode(id)
                                 }
 
                                 // Limpiar la respuesta y NO añadirla a la UI si fue un comando ejecutado
@@ -195,15 +187,8 @@ class ChatViewModel(
                         val id = match.groupValues[1].toIntOrNull()
                         if (id != null) {
                             clickExecuted = true
-                            val rect = withContext(Dispatchers.Main) {
-                                SilfAccessibilityService.instance?.performClickOnNode(id)
-                            }
                             withContext(Dispatchers.Main) {
-                                if (rect != null) {
-                                    Toast.makeText(context, "Silf: Clic en [$id] -> X:${rect.centerX()}, Y:${rect.centerY()}", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "Silf: Clic en [$id] -> Nodo no encontrado", Toast.LENGTH_SHORT).show()
-                                }
+                                SilfAccessibilityService.instance?.performClickOnNode(id)
                             }
                             _messages.value = _messages.value.filterNot { it.id == responseId }
                         }

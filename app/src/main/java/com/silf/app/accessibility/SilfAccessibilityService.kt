@@ -10,6 +10,9 @@ import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.Toast
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,7 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class SilfAccessibilityService : AccessibilityService() {
 
     // Diccionario de coordenadas para bypass de reciclaje de AccessibilityNodeInfo
-    val coordinateMap = mutableMapOf<Int, Rect>()
+    val coordinateMap = ConcurrentHashMap<Int, Rect>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -46,10 +49,10 @@ class SilfAccessibilityService : AccessibilityService() {
 
         // Filtro de Actualización:
         // Asegúrate de que coordinateMap y screenSnapshot se actualicen SOLAMENTE cuando
-        // el AccessibilityEvent provenga de un paquete distinto a tu propia app, para que
-        // la caché de coordenadas no se sobrescriba con la interfaz de Silf.
-        if (eventPkg.isEmpty() || eventPkg == packageName || eventPkg == "com.silf.app") {
-            Log.d(TAG, "Evento ignorado de Silf ($eventPkg): conservando coordinateMap congelado (${coordinateMap.size} coordenadas)")
+        // el AccessibilityEvent provenga de un paquete distinto a tu propia app y no sea teclado/IME.
+        if (eventPkg.isEmpty() || eventPkg == packageName || eventPkg == "com.silf.app" ||
+            eventPkg.contains("inputmethod") || eventPkg.contains("keyboard")) {
+            Log.d(TAG, "Evento ignorado ($eventPkg): conservando coordinateMap congelado (${coordinateMap.size} coordenadas)")
             return
         }
 
@@ -87,9 +90,10 @@ class SilfAccessibilityService : AccessibilityService() {
         try {
             val windowList = windows
             for (w in windowList) {
+                if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
                 val winRoot = w.root ?: continue
                 val pkg = winRoot.packageName?.toString().orEmpty()
-                if (pkg != packageName && pkg != "com.silf.app") {
+                if (pkg != packageName && pkg != "com.silf.app" && !pkg.contains("inputmethod") && !pkg.contains("keyboard")) {
                     return winRoot
                 } else {
                     recycleCompat(winRoot)
@@ -258,20 +262,40 @@ class SilfAccessibilityService : AccessibilityService() {
      * Si el Rect existe, calcula exactCenterX() y exactCenterY() y despacha GestureDescription en el Main Thread.
      * Retorna el Rect encontrado, o null si el ID no existe en coordinateMap.
      */
-    fun performClickOnNode(index: Int): Rect? {
-        Log.i(TAG, "Solicitado toque ciego por coordenadas en nodo con ID: $index")
-
-        val rect = coordinateMap[index]
-        if (rect != null) {
-            val centerX = rect.exactCenterX()
-            val centerY = rect.exactCenterY()
-            Log.i(TAG, "Coordenadas encontradas en coordinateMap[$index]: bounds=$rect centro=($centerX, $centerY)")
-            clickAt(centerX, centerY)
-            return rect
+    fun performClickOnNode(id: Int): Rect? {
+        val rect = coordinateMap[id]
+        if (rect == null) {
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(this, "Silf: Coordenadas no guardadas para ID $id", Toast.LENGTH_SHORT).show()
+            }
+            return null
         }
 
-        Log.e(TAG, "Nodo no encontrado: ID [$index] no existe en coordinateMap (${coordinateMap.size} coordenadas registradas)")
-        return null
+        val x = rect.exactCenterX()
+        val y = rect.exactCenterY()
+
+        val gesture = GestureDescription.Builder()
+            .addStroke(
+                GestureDescription.StrokeDescription(
+                    Path().apply {
+                        moveTo(x, y)
+                        lineTo(x, y)
+                    },
+                    0L,
+                    100L
+                )
+            )
+            .build()
+
+        Handler(Looper.getMainLooper()).post {
+            dispatchGesture(gesture, null, null)
+        }
+
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(this, "Silf: Tap en X:$x, Y:$y", Toast.LENGTH_SHORT).show()
+        }
+
+        return rect
     }
 
     /**
