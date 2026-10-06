@@ -130,16 +130,37 @@ class ChatViewModel(
             // NUNCA se pasa el historial completo de mensajes al motor LLM.
             // Se construye un prompt fresco que contiene ÚNICAMENTE el System Prompt (con el screenSnapshot más reciente)
             // y el Mensaje del Usuario actual. Esto fuerza al LLM a no repetir respuestas anteriores ni alucinar.
-            val strictPrompt = if (screenSnapshot.isNotEmpty()) {
-                "<|im_start|>system\nEres un agente de control de interfaz. Pantalla actual:\n$screenSnapshot\nResponde ÚNICA Y EXCLUSIVAMENTE con el [ID] del botón o elemento a tocar, entre corchetes. Ejemplo: [5]<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
-            } else {
-                "<|im_start|>system\nEres Silf, un asistente útil y preciso.<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
-            }
+            val systemPrompt = "Eres un analizador de datos UI estructurado. Tu ÚNICA función es leer un árbol de texto y traducir la intención del usuario a una etiqueta estricta. NO eres un asistente conversacional. NO interactúes con el usuario. NUNCA te disculpes. Si el usuario pide tocar algo, devuelve [CLICK: ID]. Si pide deslizar, devuelve [SWIPE: UP] o [SWIPE: DOWN].\n\nÁrbol UI:\n$screenSnapshot"
+            val strictPrompt = "<|im_start|>system\n$systemPrompt<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
 
             val builder = StringBuilder()
             val stopTokens = listOf("<|im_end|>", "<|endoftext|>")
-            val commandRegex = Regex("\\[(\\d+)\\]")
-            var clickExecuted = false
+            val commandRegex = Regex("""\[(CLICK|SWIPE):\s*([a-zA-Z0-9_]+)\]""", RegexOption.IGNORE_CASE)
+            val legacyRegex = Regex("""\[(\d+)\]""")
+            var actionExecuted = false
+
+            suspend fun executeAction(action: String, target: String): Boolean {
+                _closeUiEvent.emit(Unit)
+                delay(800)
+                withContext(Dispatchers.Main) {
+                    when (action.uppercase()) {
+                        "CLICK" -> {
+                            val id = target.toIntOrNull()
+                            if (id != null) {
+                                SilfAccessibilityService.instance?.performClickOnNode(id)
+                            } else {
+                                SilfAccessibilityService.instance?.performClickOnNode(target)
+                            }
+                        }
+                        "SWIPE" -> {
+                            val isUp = target.equals("UP", ignoreCase = true)
+                            SilfAccessibilityService.instance?.performSwipe(isUp)
+                        }
+                        else -> Unit
+                    }
+                }
+                return true
+            }
 
             try {
                 llmEngine.generateResponseStream(strictPrompt).collect { token ->
@@ -154,33 +175,27 @@ class ChatViewModel(
                         builder.append(cleanToken)
                         val currentText = builder.toString()
 
-                        // Buscar estrictamente comando [ID] entre corchetes
-                        val match = commandRegex.find(currentText)
-                        if (match != null && !clickExecuted) {
-                            val id = match.groupValues[1].toIntOrNull()
-                            if (id != null) {
-                                clickExecuted = true
-                                
-                                _closeUiEvent.emit(Unit)
-                                delay(800)
+                        // Buscar comando con Regex [(CLICK|SWIPE): ID] ignorando texto extra
+                        val match = commandRegex.find(currentText) ?: legacyRegex.find(currentText)
+                        if (match != null && !actionExecuted) {
+                            actionExecuted = true
+                            val action = if (match.groupValues.size >= 3) match.groupValues[1] else "CLICK"
+                            val target = if (match.groupValues.size >= 3) match.groupValues[2] else match.groupValues[1]
 
-                                // Ejecutar clic por coordenadas en el Hilo Principal
-                                withContext(Dispatchers.Main) {
-                                    SilfAccessibilityService.instance?.performClickOnNode(id)
-                                }
+                            // Ejecutar Hide-Wait-Tap / Hide-Wait-Swipe
+                            executeAction(action, target)
 
-                                // Limpiar la respuesta y NO añadirla a la UI si fue un comando ejecutado
-                                _messages.value = _messages.value.filterNot { it.id == responseId }
+                            // Limpiar la respuesta y NO añadirla a la UI si fue un comando ejecutado
+                            _messages.value = _messages.value.filterNot { it.id == responseId }
 
-                                // Detener la generación del LLM
-                                llmEngine.stopGeneration()
-                                return@collect
-                            }
+                            // Detener la generación del LLM
+                            llmEngine.stopGeneration()
+                            return@collect
                         }
 
-                        // Visibilidad de fallos / Streaming: Si aún no se ejecutó clic,
+                        // Visibilidad de fallos / Streaming: Si aún no se ejecutó acción,
                         // DEBEMOS mostrar el texto en la UI del chat para que el usuario vea si la IA alucina o explica
-                        if (!clickExecuted) {
+                        if (!actionExecuted) {
                             _messages.value = _messages.value.map {
                                 if (it.id == responseId) it.copy(text = currentText) else it
                             }
@@ -189,23 +204,17 @@ class ChatViewModel(
                 }
 
                 // Post-procesamiento al finalizar la generación dentro del bloque try
-                if (!clickExecuted) {
+                if (!actionExecuted) {
                     val fullGenerated = builder.toString().trim()
-                    val match = commandRegex.find(fullGenerated)
+                    val match = commandRegex.find(fullGenerated) ?: legacyRegex.find(fullGenerated)
 
                     if (match != null) {
-                        val id = match.groupValues[1].toIntOrNull()
-                        if (id != null) {
-                            clickExecuted = true
-                            
-                            _closeUiEvent.emit(Unit)
-                            delay(800)
+                        actionExecuted = true
+                        val action = if (match.groupValues.size >= 3) match.groupValues[1] else "CLICK"
+                        val target = if (match.groupValues.size >= 3) match.groupValues[2] else match.groupValues[1]
 
-                            withContext(Dispatchers.Main) {
-                                SilfAccessibilityService.instance?.performClickOnNode(id)
-                            }
-                            _messages.value = _messages.value.filterNot { it.id == responseId }
-                        }
+                        executeAction(action, target)
+                        _messages.value = _messages.value.filterNot { it.id == responseId }
                     } else {
                         // Si el texto generado NO hace match con la Regex, DEBES mostrar el texto en la UI del chat. No lo ocultes.
                         if (fullGenerated.isNotEmpty()) {

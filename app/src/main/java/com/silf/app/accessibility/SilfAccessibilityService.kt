@@ -344,6 +344,45 @@ class SilfAccessibilityService : AccessibilityService() {
         return null
     }
 
+    /**
+     * Despacha un gesto de desplazamiento (swipe) hacia arriba o hacia abajo con GestureDescription.
+     * UP: Desliza desde la parte inferior hacia la superior (scroll hacia abajo en contenido).
+     * DOWN: Desliza desde la parte superior hacia la inferior (scroll hacia arriba en contenido).
+     */
+    fun performSwipe(isUp: Boolean): Boolean {
+        Log.i(TAG, "Despachando swipe por GestureDescription: isUp=$isUp")
+        return try {
+            val dm = resources.displayMetrics
+            val width = dm.widthPixels.toFloat()
+            val height = dm.heightPixels.toFloat()
+            val startX = width / 2f
+            val startY = if (isUp) height * 0.75f else height * 0.25f
+            val endY = if (isUp) height * 0.25f else height * 0.75f
+
+            val path = Path().apply {
+                moveTo(startX, startY)
+                lineTo(startX, endY)
+            }
+            val stroke = GestureDescription.StrokeDescription(path, 0L, 300L)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                val dispatched = dispatchGesture(gesture, null, null)
+                Toast.makeText(this, "Silf: Swipe ${if (isUp) "UP" else "DOWN"}", Toast.LENGTH_SHORT).show()
+                dispatched
+            } else {
+                Handler(Looper.getMainLooper()).post {
+                    dispatchGesture(gesture, null, null)
+                    Toast.makeText(this, "Silf: Swipe ${if (isUp) "UP" else "DOWN"}", Toast.LENGTH_SHORT).show()
+                }
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error despachando swipe: ${e.message}", e)
+            false
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun recycleCompat(node: AccessibilityNodeInfo?) {
         if (node == null) return
@@ -379,6 +418,13 @@ class SilfAccessibilityService : AccessibilityService() {
          */
         fun performClick(nodeText: String): Boolean {
             return instance?.performClickOnNode(nodeText) != null
+        }
+
+        /**
+         * Permite ejecutar un swipe (UP o DOWN) desde cualquier ViewModel o componente.
+         */
+        fun performSwipe(isUp: Boolean): Boolean {
+            return instance?.performSwipe(isUp) == true
         }
 
         /**

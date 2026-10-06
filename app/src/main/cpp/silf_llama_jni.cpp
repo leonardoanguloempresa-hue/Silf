@@ -213,13 +213,13 @@ Java_com_silf_app_llm_LlamaNative_generate(JNIEnv *env, jobject thiz, jlong hand
             int n_decode = 0;
 
             // Helper lambda para muestrear un token dado un índice en las salidas del batch actual.
-            // Parámetros de sampling conservadores para evitar alucinaciones:
-            //   temperature = 0.4  (distribución más concentrada)
-            //   top_k       = 40   (limitar el vocabulario candidato)
-            //   top_p       = 0.9  (nucleus sampling)
-            const float SAMPLING_TEMP  = 0.4f;
-            const int   SAMPLING_TOP_K = 40;
-            const float SAMPLING_TOP_P = 0.9f;
+            // Parámetros de sampling deterministas (cero creatividad) para forzar solo comandos estructurados:
+            //   temperature = 0.1f
+            //   top_k       = 1
+            //   top_p       = 0.1f
+            const float SAMPLING_TEMP  = (temp > 0.0f && temp <= 0.1f) ? temp : 0.1f;
+            const int   SAMPLING_TOP_K = 1;
+            const float SAMPLING_TOP_P = 0.1f;
 
             auto sample_token_at = [&](int i_batch, float /*temperature_unused*/) -> llama_token {
                 float* logits = llama_get_logits_ith(infCtx->ctx, i_batch);
