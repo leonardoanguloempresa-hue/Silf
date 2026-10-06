@@ -17,6 +17,7 @@ class AssistantActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SilfState.isAssistantActive = true
         SilfAccessibilityService.showMemoryDebugToast(this)
         setContent {
             SilfTheme {
@@ -27,6 +28,12 @@ class AssistantActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        SilfState.isAssistantActive = true
         SilfAccessibilityService.showMemoryDebugToast(this)
+    }
+
+    override fun onDestroy() {
+        SilfState.isAssistantActive = false
+        super.onDestroy()
     }
 }

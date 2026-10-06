@@ -139,27 +139,13 @@ class ChatViewModel(
             val legacyRegex = Regex("""\[(\d+)\]""")
             var actionExecuted = false
 
-            suspend fun executeAction(action: String, target: String): Boolean {
-                _closeUiEvent.emit(Unit)
-                delay(800)
-                withContext(Dispatchers.Main) {
-                    when (action.uppercase()) {
-                        "CLICK" -> {
-                            val id = target.toIntOrNull()
-                            if (id != null) {
-                                SilfAccessibilityService.instance?.performClickOnNode(id)
-                            } else {
-                                SilfAccessibilityService.instance?.performClickOnNode(target)
-                            }
-                        }
-                        "SWIPE" -> {
-                            val isUp = target.equals("UP", ignoreCase = true)
-                            SilfAccessibilityService.instance?.performSwipe(isUp)
-                        }
-                        else -> Unit
-                    }
+            fun scheduleServiceAction(action: String, target: String) {
+                val idInt = target.toIntOrNull()
+                if (idInt != null) {
+                    SilfAccessibilityService.instance?.scheduleAction(action, idInt)
+                } else {
+                    SilfAccessibilityService.instance?.scheduleAction(action, target)
                 }
-                return true
             }
 
             try {
@@ -182,8 +168,11 @@ class ChatViewModel(
                             val action = if (match.groupValues.size >= 3) match.groupValues[1] else "CLICK"
                             val target = if (match.groupValues.size >= 3) match.groupValues[2] else match.groupValues[1]
 
-                            // Ejecutar Hide-Wait-Tap / Hide-Wait-Swipe
-                            executeAction(action, target)
+                            // Delegación: programar la acción en segundo plano en SilfAccessibilityService
+                            scheduleServiceAction(action, target)
+
+                            // Autodestrucción: INMEDIATAMENTE DESPUÉS enviar evento para que AssistantActivity ejecute finish()
+                            _closeUiEvent.emit(Unit)
 
                             // Limpiar la respuesta y NO añadirla a la UI si fue un comando ejecutado
                             _messages.value = _messages.value.filterNot { it.id == responseId }
@@ -213,7 +202,9 @@ class ChatViewModel(
                         val action = if (match.groupValues.size >= 3) match.groupValues[1] else "CLICK"
                         val target = if (match.groupValues.size >= 3) match.groupValues[2] else match.groupValues[1]
 
-                        executeAction(action, target)
+                        // Delegación y Autodestrucción
+                        scheduleServiceAction(action, target)
+                        _closeUiEvent.emit(Unit)
                         _messages.value = _messages.value.filterNot { it.id == responseId }
                     } else {
                         // Si el texto generado NO hace match con la Regex, DEBES mostrar el texto en la UI del chat. No lo ocultes.

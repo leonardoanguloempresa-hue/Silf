@@ -13,10 +13,15 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
+import com.silf.app.SilfState
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Servicio de Accesibilidad para lectura de pantalla y ejecución física de acciones (clics por coordenadas).
@@ -48,12 +53,12 @@ class SilfAccessibilityService : AccessibilityService() {
         if (event == null) return
         val eventPkg = event.packageName?.toString().orEmpty()
 
-        // Si la ventana que cambió es la propia Silf (ej. AssistantActivity abriéndose)
-        if (eventPkg == packageName || eventPkg == "com.silf.app") {
+        // Si la ventana que cambió es la propia Silf (ej. AssistantActivity abriéndose) o el asistente está activo
+        if (eventPkg == packageName || eventPkg == "com.silf.app" || SilfState.isAssistantActive) {
             if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                 showMemoryDebugToast()
             }
-            Log.d(TAG, "Evento ignorado de Silf ($eventPkg): conservando coordinateMap congelado (${coordinateMap.size} coordenadas)")
+            Log.d(TAG, "Evento ignorado de Silf o Asistente activo ($eventPkg, isAssistantActive=${SilfState.isAssistantActive}): conservando coordinateMap congelado (${coordinateMap.size} coordenadas)")
             return
         }
 
@@ -130,12 +135,12 @@ class SilfAccessibilityService : AccessibilityService() {
         val rootPkg = root.packageName?.toString().orEmpty()
 
         // Seguro Anti-Borrado:
-        // Si rootInActiveWindow?.packageName == "com.silf.app" (o el paquete de esta app),
+        // Si el asistente está activo o rootInActiveWindow?.packageName pertenece a Silf/teclado,
         // ABORTA el escaneo (return). No limpies el mapa ni actualices el texto. Conserva los datos de la app de fondo.
-        if (rootPkg.isEmpty() || rootPkg == packageName || rootPkg == "com.silf.app" ||
+        if (SilfState.isAssistantActive || rootPkg.isEmpty() || rootPkg == packageName || rootPkg == "com.silf.app" ||
             rootPkg.contains("inputmethod") || rootPkg.contains("keyboard")) {
             recycleCompat(root)
-            Log.d(TAG, "Seguro Anti-Borrado activado: ventana activa es $rootPkg. Abortando escaneo para conservar ${coordinateMap.size} nodos en memoria.")
+            Log.d(TAG, "Seguro Anti-Borrado activado: ventana activa es $rootPkg (isAssistantActive=${SilfState.isAssistantActive}). Abortando escaneo para conservar ${coordinateMap.size} nodos en memoria.")
             return _screenSnapshot.value.takeIf { it.isNotBlank() }
         }
 
@@ -383,6 +388,50 @@ class SilfAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Programa una acción de accesibilidad en segundo plano (CLOSE-THEN-ACT).
+     * Espera obligatoria de 1200ms para que AssistantActivity complete su animación de cierre
+     * y el WindowManager devuelva el foco por completo a la app subyacente.
+     * Limpia SilfState.isAssistantActive a false justo antes del gesto para reanudar la lectura de pantalla.
+     */
+    fun scheduleAction(action: String, id: Int) {
+        scheduleAction(action, id.toString())
+    }
+
+    fun scheduleAction(action: String, target: String) {
+        Log.i(TAG, "scheduleAction recibido: action=$action, target=$target. Iniciando espera asíncrona de 1200ms...")
+        CoroutineScope(Dispatchers.Main).launch {
+            delay(1200)
+
+            // Limpieza del Estado: Asegurarse de que SilfState.isAssistantActive pase a false justo antes del toque
+            SilfState.isAssistantActive = false
+            Log.i(TAG, "scheduleAction: Retraso de 1200ms cumplido, SilfState.isAssistantActive=false. Despachando gesto $action ($target)")
+
+            when (action.uppercase()) {
+                "CLICK" -> {
+                    val nodeId = target.toIntOrNull()
+                    if (nodeId != null) {
+                        performClickOnNode(nodeId)
+                    } else {
+                        performClickOnNode(target)
+                    }
+                }
+                "SWIPE" -> {
+                    val isUp = target.equals("UP", ignoreCase = true)
+                    performSwipe(isUp)
+                }
+                else -> {
+                    val nodeId = target.toIntOrNull()
+                    if (nodeId != null) {
+                        performClickOnNode(nodeId)
+                    } else {
+                        performClickOnNode(target)
+                    }
+                }
+            }
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun recycleCompat(node: AccessibilityNodeInfo?) {
         if (node == null) return
@@ -425,6 +474,17 @@ class SilfAccessibilityService : AccessibilityService() {
          */
         fun performSwipe(isUp: Boolean): Boolean {
             return instance?.performSwipe(isUp) == true
+        }
+
+        /**
+         * Programa una acción de accesibilidad con retraso (CLOSE-THEN-ACT) desde cualquier ViewModel.
+         */
+        fun scheduleAction(action: String, id: Int) {
+            instance?.scheduleAction(action, id)
+        }
+
+        fun scheduleAction(action: String, target: String) {
+            instance?.scheduleAction(action, target)
         }
 
         /**
