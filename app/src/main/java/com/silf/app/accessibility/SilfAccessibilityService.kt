@@ -148,7 +148,6 @@ class SilfAccessibilityService : AccessibilityService() {
         coordinateMap.clear()
 
         val sb = StringBuilder()
-        sb.append("[app: ").append(rootPkg).append("]\n")
         val counter = intArrayOf(0)
         try {
             traverse(root, depth = 0, out = sb, counter = counter)
@@ -157,14 +156,14 @@ class SilfAccessibilityService : AccessibilityService() {
         }
         val result = sb.toString().trimEnd()
         _screenSnapshot.value = result
-        Log.i(TAG, "Snapshot y coordinateMap actualizados para $rootPkg: ${counter[0]} coordenadas indexadas (tamaño map: ${coordinateMap.size})")
+        Log.i(TAG, "Snapshot ultra-denso y coordinateMap actualizados para $rootPkg: ${counter[0]} coordenadas indexadas")
         return result
     }
 
     /**
      * Recorrido recursivo en profundidad.
-     * IGNORA/FILTRA todos los nodos cuyo packageName sea el de la propia aplicación (Silf).
-     * Para cada nodo elegible, extrae los límites de pantalla (Rect) y los guarda en coordinateMap.
+     * Genera un formato ultra-denso de una sola línea por nodo: [ID] Texto_o_Desc
+     * Sin jerarquías, XML ni atributos vacíos, minimizando drásticamente los tokens de entrada.
      */
     private fun traverse(
         node: AccessibilityNodeInfo,
@@ -177,38 +176,31 @@ class SilfAccessibilityService : AccessibilityService() {
         if (pkg == packageName || pkg == "com.silf.app") return
         if (!node.isVisibleToUser) return
 
-        val text = node.text?.toString()?.trim().orEmpty()
-        val desc = node.contentDescription?.toString()?.trim().orEmpty()
+        val text = node.text?.toString()?.trim().orEmpty().replace('\n', ' ')
+        val desc = node.contentDescription?.toString()?.trim().orEmpty().replace('\n', ' ')
         val clickable = node.isClickable
         val editable = node.isEditable
-        val scrollable = node.isScrollable
 
-        if (text.isNotEmpty() || desc.isNotEmpty() || clickable || editable) {
-            val i = counter[0]
+        // Formato estricto: [ID] Texto_o_Desc
+        val label = when {
+            text.isNotEmpty() && desc.isNotEmpty() && !text.equals(desc, ignoreCase = true) -> "$text ($desc)"
+            text.isNotEmpty() -> text
+            desc.isNotEmpty() -> desc
+            clickable || editable -> {
+                node.className?.toString()?.substringAfterLast('.')?.takeIf { it != "View" } ?: ""
+            }
+            else -> ""
+        }.trim()
 
-            // Población Síncrona:
-            // Justo en el momento en que asignas un índice i a un nodo y lo añades al texto,
-            // DEBES extraer sus coordenadas y guardarlas:
+        if (label.isNotEmpty()) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
-            coordinateMap[i] = rect
-
-            val className = node.className?.toString()?.substringAfterLast('.') ?: "View"
-            out.append("[").append(i).append("] ").append(className)
-            if (text.isNotEmpty()) out.append(" \"").append(text.take(MAX_TEXT_LEN)).append('"')
-            if (desc.isNotEmpty() && desc != text) {
-                out.append(" desc=\"").append(desc.take(MAX_TEXT_LEN)).append('"')
+            if (rect.width() > 0 && rect.height() > 0) {
+                val i = counter[0]
+                coordinateMap[i] = rect
+                out.append("[").append(i).append("] ").append(label.take(MAX_TEXT_LEN)).append('\n')
+                counter[0]++
             }
-            val flags = buildList {
-                if (clickable) add("clickable")
-                if (editable) add("editable")
-                if (scrollable) add("scrollable")
-                if (node.isCheckable) add(if (node.isChecked) "checked" else "unchecked")
-            }
-            if (flags.isNotEmpty()) out.append(" (").append(flags.joinToString(",")).append(')')
-            out.append('\n')
-
-            counter[0]++
         }
 
         for (i in 0 until node.childCount) {

@@ -152,7 +152,7 @@ class LlamaCppEngine private constructor() : LlmEngine {
         // AtomicBoolean garantiza visibilidad entre el hilo de coroutine y el hilo nativo C++
         val isStopped = AtomicBoolean(false)
 
-        native.generate(modelHandle, finalPrompt, 512, 0.1f, object : TokenCallback {
+        native.generate(modelHandle, finalPrompt, 10, 0.1f, object : TokenCallback {
             override fun onToken(text: String) {
                 if (isStopped.get() || channel.isClosedForSend) return
                 if (stopTokens.any { text.contains(it) }) {

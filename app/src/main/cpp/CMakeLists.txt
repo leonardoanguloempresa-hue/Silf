@@ -13,8 +13,8 @@ set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "Build examples" FORCE)
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "Build tests" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "Build server" FORCE)
 
-# Backend GPU Vulkan: si fallan dependencias de host (glslc/vulkan-shaders-gen cross-compilation),
-# se recurre a máxima optimización -O3 y vectorización NEON de CPU para máxima velocidad
+# Backend GPU Vulkan: requiere ejecución de shaders en host durante cross-compilación ARM64.
+# Se utiliza máxima optimización -O3 y vectorización NEON de CPU para máxima velocidad en SoC móvil
 set(GGML_VULKAN OFF CACHE BOOL "ggml: use Vulkan" FORCE)
 
 add_subdirectory(llama.cpp)

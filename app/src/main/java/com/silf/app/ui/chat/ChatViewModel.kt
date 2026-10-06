@@ -130,7 +130,7 @@ class ChatViewModel(
             // NUNCA se pasa el historial completo de mensajes al motor LLM.
             // Se construye un prompt fresco que contiene ÚNICAMENTE el System Prompt (con el screenSnapshot más reciente)
             // y el Mensaje del Usuario actual. Esto fuerza al LLM a no repetir respuestas anteriores ni alucinar.
-            val systemPrompt = "Eres un analizador de datos UI estructurado. Tu ÚNICA función es leer un árbol de texto y traducir la intención del usuario a una etiqueta estricta. NO eres un asistente conversacional. NO interactúes con el usuario. NUNCA te disculpes. Si el usuario pide tocar algo, devuelve [CLICK: ID]. Si pide deslizar, devuelve [SWIPE: UP] o [SWIPE: DOWN].\n\nÁrbol UI:\n$screenSnapshot"
+            val systemPrompt = "Analiza la UI y la orden. Elige el [ID] que mejor coincida. Respuesta estricta: [CLICK: ID] o [SWIPE: UP/DOWN].\n\nUI:\n$screenSnapshot"
             val strictPrompt = "<|im_start|>system\n$systemPrompt<|im_end|>\n<|im_start|>user\n$userMessage<|im_end|>\n<|im_start|>assistant\n"
 
             val builder = StringBuilder()

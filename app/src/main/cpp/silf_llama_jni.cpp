@@ -83,7 +83,9 @@ Java_com_silf_app_llm_LlamaNative_loadModel(JNIEnv *env, jobject thiz, jstring m
 
         llama_context_params cparams = llama_context_default_params();
         cparams.n_ctx = context_size;
-        cparams.n_threads = threads;
+        int effective_threads = (threads > 0) ? threads : 4;
+        cparams.n_threads = effective_threads;
+        cparams.n_threads_batch = effective_threads; // Optimización clave: batch evaluation con todos los cores
         cparams.offload_kqv = true; // Offload KV ops a GPU si hay soporte
         cparams.flash_attn = true;  // Flash attention para máxima velocidad
 
