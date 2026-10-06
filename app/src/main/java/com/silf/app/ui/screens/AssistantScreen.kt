@@ -65,6 +65,12 @@ fun AssistantScreen() {
         }
     }
 
+    LaunchedEffect(Unit) {
+        chatViewModel.closeUiEvent.collect {
+            activity?.finish()
+        }
+    }
+
     // Contenedor raíz transparente
     Box(
         modifier = Modifier

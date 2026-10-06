@@ -13,9 +13,12 @@ import com.silf.app.domain.llm.LlmEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -42,6 +45,9 @@ class ChatViewModel(
 
     private val _showErrorToast = MutableStateFlow<String?>(null)
     val showErrorToast: StateFlow<String?> = _showErrorToast.asStateFlow()
+
+    private val _closeUiEvent = MutableSharedFlow<Unit>()
+    val closeUiEvent = _closeUiEvent.asSharedFlow()
 
     val screenSnapshot: StateFlow<String> = screenSnapshotFlow
 
@@ -154,6 +160,10 @@ class ChatViewModel(
                             val id = match.groupValues[1].toIntOrNull()
                             if (id != null) {
                                 clickExecuted = true
+                                
+                                _closeUiEvent.emit(Unit)
+                                delay(800)
+
                                 // Ejecutar clic por coordenadas en el Hilo Principal
                                 withContext(Dispatchers.Main) {
                                     SilfAccessibilityService.instance?.performClickOnNode(id)
@@ -187,6 +197,10 @@ class ChatViewModel(
                         val id = match.groupValues[1].toIntOrNull()
                         if (id != null) {
                             clickExecuted = true
+                            
+                            _closeUiEvent.emit(Unit)
+                            delay(800)
+
                             withContext(Dispatchers.Main) {
                                 SilfAccessibilityService.instance?.performClickOnNode(id)
                             }

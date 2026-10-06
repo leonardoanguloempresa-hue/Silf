@@ -294,7 +294,7 @@ class SilfAccessibilityService : AccessibilityService() {
                         lineTo(x, y)
                     },
                     0L,
-                    100L
+                    150L
                 )
             )
             .build()
