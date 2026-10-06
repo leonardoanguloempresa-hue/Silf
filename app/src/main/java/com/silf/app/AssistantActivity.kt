@@ -3,6 +3,7 @@ package com.silf.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import com.silf.app.accessibility.SilfAccessibilityService
 import com.silf.app.ui.screens.AssistantScreen
 import com.silf.app.ui.theme.SilfTheme
 
@@ -16,10 +17,16 @@ class AssistantActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SilfAccessibilityService.showMemoryDebugToast(this)
         setContent {
             SilfTheme {
                 AssistantScreen()
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        SilfAccessibilityService.showMemoryDebugToast(this)
     }
 }

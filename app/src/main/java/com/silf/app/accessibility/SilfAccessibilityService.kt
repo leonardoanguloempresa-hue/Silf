@@ -2,6 +2,7 @@ package com.silf.app.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Context
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
@@ -47,11 +48,19 @@ class SilfAccessibilityService : AccessibilityService() {
         if (event == null) return
         val eventPkg = event.packageName?.toString().orEmpty()
 
+        // Si la ventana que cambió es la propia Silf (ej. AssistantActivity abriéndose)
+        if (eventPkg == packageName || eventPkg == "com.silf.app") {
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                showMemoryDebugToast()
+            }
+            Log.d(TAG, "Evento ignorado de Silf ($eventPkg): conservando coordinateMap congelado (${coordinateMap.size} coordenadas)")
+            return
+        }
+
         // Filtro de Actualización:
         // Asegúrate de que coordinateMap y screenSnapshot se actualicen SOLAMENTE cuando
         // el AccessibilityEvent provenga de un paquete distinto a tu propia app y no sea teclado/IME.
-        if (eventPkg.isEmpty() || eventPkg == packageName || eventPkg == "com.silf.app" ||
-            eventPkg.contains("inputmethod") || eventPkg.contains("keyboard")) {
+        if (eventPkg.isEmpty() || eventPkg.contains("inputmethod") || eventPkg.contains("keyboard")) {
             Log.d(TAG, "Evento ignorado ($eventPkg): conservando coordinateMap congelado (${coordinateMap.size} coordenadas)")
             return
         }
@@ -113,19 +122,20 @@ class SilfAccessibilityService : AccessibilityService() {
      * conserva intacto coordinateMap y el snapshot congelado.
      */
     fun captureScreen(): String? {
-        var root = rootInActiveWindow
-        val isSilfActive = root == null || root.packageName == packageName || root.packageName?.toString() == "com.silf.app"
-
-        if (isSilfActive) {
-            recycleCompat(root)
-            root = findTargetWindowRoot()
+        val root = rootInActiveWindow ?: run {
+            Log.d(TAG, "Seguro Anti-Borrado: rootInActiveWindow es nulo. Conservando ${coordinateMap.size} nodos en memoria.")
+            return _screenSnapshot.value.takeIf { it.isNotBlank() }
         }
 
-        // Si la ventana encontrada sigue siendo de Silf o no existe,
-        // NO borramos coordinateMap ni _screenSnapshot para preservar intacta la última foto congelada.
-        if (root == null || root.packageName == packageName || root.packageName?.toString() == "com.silf.app") {
+        val rootPkg = root.packageName?.toString().orEmpty()
+
+        // Seguro Anti-Borrado:
+        // Si rootInActiveWindow?.packageName == "com.silf.app" (o el paquete de esta app),
+        // ABORTA el escaneo (return). No limpies el mapa ni actualices el texto. Conserva los datos de la app de fondo.
+        if (rootPkg.isEmpty() || rootPkg == packageName || rootPkg == "com.silf.app" ||
+            rootPkg.contains("inputmethod") || rootPkg.contains("keyboard")) {
             recycleCompat(root)
-            Log.d(TAG, "Ventana externa no-Silf no disponible. Conservando coordinateMap congelado (${coordinateMap.size} coordenadas).")
+            Log.d(TAG, "Seguro Anti-Borrado activado: ventana activa es $rootPkg. Abortando escaneo para conservar ${coordinateMap.size} nodos en memoria.")
             return _screenSnapshot.value.takeIf { it.isNotBlank() }
         }
 
@@ -133,7 +143,7 @@ class SilfAccessibilityService : AccessibilityService() {
         coordinateMap.clear()
 
         val sb = StringBuilder()
-        sb.append("[app: ").append(root.packageName ?: "desconocida").append("]\n")
+        sb.append("[app: ").append(rootPkg).append("]\n")
         val counter = intArrayOf(0)
         try {
             traverse(root, depth = 0, out = sb, counter = counter)
@@ -142,7 +152,7 @@ class SilfAccessibilityService : AccessibilityService() {
         }
         val result = sb.toString().trimEnd()
         _screenSnapshot.value = result
-        Log.i(TAG, "Snapshot y coordinateMap actualizados para ${root.packageName}: ${counter[0]} coordenadas indexadas")
+        Log.i(TAG, "Snapshot y coordinateMap actualizados para $rootPkg: ${counter[0]} coordenadas indexadas (tamaño map: ${coordinateMap.size})")
         return result
     }
 
@@ -169,9 +179,17 @@ class SilfAccessibilityService : AccessibilityService() {
         val scrollable = node.isScrollable
 
         if (text.isNotEmpty() || desc.isNotEmpty() || clickable || editable) {
-            val idx = counter[0]
+            val i = counter[0]
+
+            // Población Síncrona:
+            // Justo en el momento en que asignas un índice i a un nodo y lo añades al texto,
+            // DEBES extraer sus coordenadas y guardarlas:
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            coordinateMap[i] = rect
+
             val className = node.className?.toString()?.substringAfterLast('.') ?: "View"
-            out.append("[").append(idx).append("] ").append(className)
+            out.append("[").append(i).append("] ").append(className)
             if (text.isNotEmpty()) out.append(" \"").append(text.take(MAX_TEXT_LEN)).append('"')
             if (desc.isNotEmpty() && desc != text) {
                 out.append(" desc=\"").append(desc.take(MAX_TEXT_LEN)).append('"')
@@ -184,12 +202,6 @@ class SilfAccessibilityService : AccessibilityService() {
             }
             if (flags.isNotEmpty()) out.append(" (").append(flags.joinToString(",")).append(')')
             out.append('\n')
-
-            // Diccionario de Coordenadas (Bypass de Nodos):
-            // Extrae los límites de cada nodo y guárdalo en coordinateMap
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            coordinateMap[idx] = rect
 
             counter[0]++
         }
@@ -392,6 +404,34 @@ class SilfAccessibilityService : AccessibilityService() {
                 Log.w(TAG, "Error refrescando snapshot en tiempo real: ${e.message}")
                 _screenSnapshot.value
             }
+        }
+
+        private var lastToastTime = 0L
+
+        /**
+         * Emite un Toast temporal que indica cuántos nodos están guardados en coordinateMap.
+         */
+        fun showMemoryDebugToast(fallbackContext: Context? = null) {
+            val now = System.currentTimeMillis()
+            if (now - lastToastTime < 1000L) return
+            lastToastTime = now
+
+            val inst = instance
+            val count = inst?.coordinateMap?.size ?: 0
+            val ctx = inst ?: fallbackContext ?: return
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(ctx, "Silf: $count nodos en memoria", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * Emite un Toast con la cantidad actual de nodos en memoria.
+     */
+    fun showMemoryDebugToast() {
+        val size = coordinateMap.size
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(this, "Silf: $size nodos en memoria", Toast.LENGTH_SHORT).show()
         }
     }
 }
